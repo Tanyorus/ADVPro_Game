@@ -1,5 +1,7 @@
 package advpro_game;
 
+
+
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
@@ -7,8 +9,9 @@ import advpro_game.controller.DrawingLoop;
 import advpro_game.controller.GameLoop;
 import advpro_game.view.GameStage;
 
+
 public class Launcher extends Application {
-    public static void main(String[] args) { launch(args); }
+   public static void main(String[] args) {launch(args);}
     @Override
     public void start(Stage primaryStage) {
         GameStage gameStage = new GameStage();

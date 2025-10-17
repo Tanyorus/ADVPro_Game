@@ -1,4 +1,4 @@
-module advpro_Game {
+module avdpro_game {
     requires javafx.controls;
     requires javafx.fxml;
 

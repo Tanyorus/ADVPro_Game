@@ -89,12 +89,12 @@ public class GameCharacter extends Pane {
         setScaleX(id % 2 * 2 - 1);
     }
     public void moveLeft() {
-        setScaleX(1);
+        setScaleX(-1);
         isMoveLeft = true;
         isMoveRight = false;
     }
     public void moveRight() {
-        setScaleX(-1);
+        setScaleX(1);
         isMoveLeft = false;
         isMoveRight = true;
     }
