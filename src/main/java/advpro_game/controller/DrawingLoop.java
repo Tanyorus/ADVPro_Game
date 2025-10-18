@@ -10,6 +10,7 @@ public class DrawingLoop implements Runnable {
     private int frameRate;
     private float interval;
     private boolean running;
+    private GameCharacter Character;
     public DrawingLoop(GameStage gameStage) {
         this.gameStage = gameStage;
         frameRate = 60;
@@ -30,31 +31,29 @@ public class DrawingLoop implements Runnable {
             }
         }
     }
-    private void paint(List<GameCharacter> gameCharacterList) {
+    private void paint(List<GameCharacter> gameCharacterList,double dt) {
         for (GameCharacter gameCharacter : gameCharacterList) {
-            gameCharacter.repaint();
+            gameCharacter.repaint(dt);
         }
     }
     @Override
     public void run() {
+        long last = System.nanoTime();
+
         while (running) {
-            float time = System.currentTimeMillis();
+            long now = System.nanoTime();
+            double dt = (now - last)/1000000.0; //ms
+            last = now;
 
             checkDrawCollisions(gameStage.getGameCharacterList());
-            paint(gameStage.getGameCharacterList());
+            paint(gameStage.getGameCharacterList(),dt);
 
-            time = System.currentTimeMillis() - time;
-            if (time < interval) {
-                try {
-                    Thread.sleep((long) (interval - time));
-                } catch (InterruptedException e) {
-                }
-            } else {
-                try {
-                    Thread.sleep((long) (interval - (interval % time)));
-                } catch (InterruptedException e) {
-                }
-            }
+            long frameTime = (System.nanoTime() - now)/1000000L;
+            long sleepMs = (long)interval -frameTime;
+            if (sleepMs < 1) sleepMs = 1;
+            try {
+                Thread.sleep(sleepMs);
+            } catch (InterruptedException ignored) {}
         }
     }
 }

@@ -13,7 +13,7 @@ public class GameLoop implements Runnable {
     private boolean running;
     public GameLoop(GameStage gameStage) {
         this.gameStage = gameStage;
-        frameRate = 10;
+        frameRate = 60;
         interval = 1000.0f / frameRate;
         running = true;
     }
@@ -23,14 +23,19 @@ public class GameLoop implements Runnable {
             boolean leftPressed = gameStage.getKeys().isPressed(gameCharacter.getLeftKey());
             boolean rightPressed = gameStage.getKeys().isPressed(gameCharacter.getRightKey());
             boolean upPressed = gameStage.getKeys().isPressed(gameCharacter.getUpKey());
+            boolean downPressed = gameStage.getKeys().isPressed(gameCharacter.getDownKey());
 
-            if (leftPressed && rightPressed) {
+            if(upPressed && rightPressed ) {
+                gameCharacter.jumpForward(1);
+            }
+            else if(downPressed && rightPressed ) {
+                gameCharacter.jumpForward(-1);
+            }
+            else if (leftPressed && rightPressed) {
                 gameCharacter.stop();
             } else if (leftPressed) {
-                gameCharacter.getImageView().tick();
                 gameCharacter.moveLeft();
             } else if (rightPressed) {
-                gameCharacter.getImageView().tick();
                 gameCharacter.moveRight();
             } else {
                 gameCharacter.stop();
@@ -38,6 +43,9 @@ public class GameLoop implements Runnable {
 
             if (upPressed) {
                 gameCharacter.jump();
+            }
+            if (downPressed) {
+                gameCharacter.prone();
             }
         }
     }
