@@ -74,6 +74,7 @@ public class AnimatedSprite extends ImageView {
             frame = 0;
             accMs = 0;
             setViewport(new Rectangle2D(s.startCol* s.frameW,s.startRow* s.frameH,s.frameH,s.frameH));
+
         }
     }
     public void setAction(Action action){
@@ -95,6 +96,7 @@ public class AnimatedSprite extends ImageView {
                 spec.frameW,
                 spec.frameH
         ));
+
         System.out.println("[DEBUG] Action set to " + currentAction);
     }
 
@@ -106,6 +108,7 @@ public class AnimatedSprite extends ImageView {
             frame = 0;
             accMs = 0;
             setViewport(new Rectangle2D(s.startCol* s.frameW,s.startRow* s.frameH,s.frameW,s.frameH));
+
         }
     }
 
@@ -146,14 +149,14 @@ public class AnimatedSprite extends ImageView {
     public void debugFramestatus(){
         if (frame != lastFrameIndex) {
             long now = System.currentTimeMillis();
-            System.out.println("[ANIM DEBUG] Frame changed → " + frame +
-                    " (action=" + currentAction + ", time=" + now + ")");
+           // System.out.println("[ANIM DEBUG] Frame changed → " + frame +
+           //         " (action=" + currentAction + ", time=" + now + ")");
             lastFrameIndex = frame;
             lastFramePrint = now;
         } else {
             long now = System.currentTimeMillis();
             if (now - lastFramePrint > 1000) { // check every second
-                System.out.println("[ANIM DEBUG] No frame change for >1s (still " + frame + ")");
+                //System.out.println("[ANIM DEBUG] No frame change for >1s (still " + frame + ")");
                 lastFramePrint = now;
             }
         }
