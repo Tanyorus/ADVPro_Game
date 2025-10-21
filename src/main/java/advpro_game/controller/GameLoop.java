@@ -1,80 +1,108 @@
 package advpro_game.controller;
 
+import advpro_game.model.Bullet;
 import advpro_game.model.GameCharacter;
 import advpro_game.view.GameStage;
 import advpro_game.view.Score;
+import javafx.application.Platform;
 
 import java.util.List;
 
 public class GameLoop implements Runnable {
-    private GameStage gameStage;
-    private int frameRate;
-    private float interval;
-    private boolean running;
+    private final GameStage gameStage;
+    private final int frameRate = 60;
+    private final double intervalMs = 1000.0 / frameRate;
+    private volatile boolean running = true;
+
     public GameLoop(GameStage gameStage) {
         this.gameStage = gameStage;
-        frameRate = 60;
-        interval = 1000.0f / frameRate;
-        running = true;
     }
-    private void update(List<GameCharacter> gameCharacterList) {
 
-        for (GameCharacter gameCharacter : gameCharacterList) {
-            boolean leftPressed = gameStage.getKeys().isPressed(gameCharacter.getLeftKey());
-            boolean rightPressed = gameStage.getKeys().isPressed(gameCharacter.getRightKey());
-            boolean upPressed = gameStage.getKeys().isPressed(gameCharacter.getUpKey());
-            boolean downPressed = gameStage.getKeys().isPressed(gameCharacter.getDownKey());
+    public void stop() { running = false; }
 
-            if(upPressed && rightPressed ) {
-                gameCharacter.jumpForward(1);
-            }
-            else if(downPressed && rightPressed ) {
-                gameCharacter.jumpForward(-1);
-            }
-            else if (leftPressed && rightPressed) {
-                gameCharacter.stop();
-            } else if (leftPressed) {
-                gameCharacter.moveLeft();
-            } else if (rightPressed) {
-                gameCharacter.moveRight();
-            } else {
-                gameCharacter.stop();
-            }
-
-            if (upPressed) {
-                gameCharacter.jump();
-            }
-            if (downPressed) {
-                gameCharacter.prone();
-            }
-        }
-    }
-    private void updateScore(List<Score> scoreList, List<GameCharacter> gameCharacterList) {
-        javafx.application.Platform.runLater(() ->{
-            for (int i = 0 ; i < scoreList.size() ; i++) {
-                scoreList.get(i).setPoint(gameCharacterList.get(i).getScore());
-            }
-        });
-    }
     @Override
     public void run() {
+        long last = System.nanoTime();
         while (running) {
-            float time = System.currentTimeMillis();
-            update(gameStage.getGameCharacterList());
-            updateScore(gameStage.getScoreList(), gameStage.getGameCharacterList());
-            time = System.currentTimeMillis() - time;
-            if (time < interval) {
-                try {
-                    Thread.sleep((long) (interval - time));
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
-            } else {
-                try {
-                    Thread.sleep((long) (interval - (interval % time)));
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
-                }
+            long start = System.nanoTime();
+            double dtMs = (start - last) / 1_000_000.0; // ms
+            last = start;
+
+            // Do all scene work on FX thread
+            Platform.runLater(() -> updateFrameOnFxThread(dtMs));
+
+            long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+            long sleepMs = Math.max(1, (long)(intervalMs - elapsedMs));
+            try { Thread.sleep(sleepMs); } catch (InterruptedException ignored) {}
+        }
+    }
+
+    private void updateFrameOnFxThread(double dtMs) {
+        // edge-trigger helpers (optional; safe even if unused)
+        gameStage.getKeys().beginFrame();
+
+        // --- Players ---
+        List<GameCharacter> chars = gameStage.getGameCharacterList();
+        for (GameCharacter gc : chars) {
+            gc.beginFrame();
+
+            boolean left  = gameStage.getKeys().isPressed(gc.getLeftKey());
+            boolean right = gameStage.getKeys().isPressed(gc.getRightKey());
+            boolean up    = gameStage.getKeys().isPressed(gc.getUpKey());
+            boolean down  = gameStage.getKeys().isPressed(gc.getDownKey());
+
+            // movement intents
+            if (up && right)      gc.jumpForward(1);
+            else if (up && left)  gc.jumpForward(-1);
+            else if (left && right) gc.stop();
+            else if (left)        gc.moveLeft();
+            else if (right)       gc.moveRight();
+            else                  gc.stop();
+
+            if (up) gc.jump();
+            gc.handleDownKey(down);
+            if (down && !left && !right) gc.prone();
+
+            // mouse fire (8-way)
+            Bullet created = gc.tryCreateBullet(gameStage.getKeys());
+            if (created != null) gameStage.addBullet(created);
+
+            // keyboard fire (Space) — straight shot
+            if (gameStage.getKeys().isPressed(javafx.scene.input.KeyCode.SPACE)) {
+                gameStage.addBullet(gc.shoot());
+            }
+
+            // physics + collisions
+            gc.repaint(dtMs); // applies gravity & horizontal motion
+            gc.checkPlatformCollision(gameStage.getPlatforms());
+            gc.checkReachHighest();
+            gc.checkReachFloor();
+            gc.checkReachGameWall();
+        }
+
+        // --- Bullets ---
+        updateBullets( dtMs / 1000.0 );
+
+        // --- HUD ---
+        updateScore(gameStage.getScoreList(), chars);
+    }
+
+    private void updateScore(List<Score> scoreList, List<GameCharacter> list) {
+        for (int i = 0; i < scoreList.size() && i < list.size(); i++) {
+            scoreList.get(i).setPoint(list.get(i).getScore());
+        }
+    }
+
+    private void updateBullets(double dtSeconds) {
+        var bullets = gameStage.getBullets();
+        var it = bullets.iterator();
+        while (it.hasNext()) {
+            Bullet b = it.next();
+            b.update(dtSeconds);
+            if (b.getX() < -100 || b.getX() > GameStage.WIDTH + 100
+                    || b.getY() < -100 || b.getY() > GameStage.HEIGHT + 200) {
+                it.remove();
+                gameStage.removeBullet(b);
             }
         }
     }
