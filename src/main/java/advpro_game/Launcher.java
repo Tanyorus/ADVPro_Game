@@ -16,47 +16,59 @@ public class Launcher extends Application {
 
     @Override
     public void start(Stage primaryStage) {
+        // Global handler: highlight GameException nicely
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
-            System.err.println("[Uncaught] in " + t.getName());
-            e.printStackTrace();
+            Throwable cause = (e.getCause() != null) ? e.getCause() : e;
+            if (cause instanceof GameException) {
+                System.err.println("[Game Error] " + cause.getMessage());
+            } else {
+                System.err.println("[Uncaught] in " + t.getName());
+                cause.printStackTrace();
+            }
         });
 
-        GameStage root = new GameStage();
-        Scene scene = new Scene(root, GameStage.WIDTH, GameStage.HEIGHT);
+        try {
+            GameStage root = new GameStage();
+            Scene scene = new Scene(root, GameStage.WIDTH, GameStage.HEIGHT);
 
-        // ---- SCENE-LEVEL INPUT (reliable focus) ----
-        scene.addEventFilter(KeyEvent.KEY_PRESSED,  e -> root.getKeys().add(e.getCode()));
-        scene.addEventFilter(KeyEvent.KEY_RELEASED, e -> root.getKeys().remove(e.getCode()));
-        scene.addEventFilter(MouseEvent.MOUSE_PRESSED,  e -> root.getKeys().add(e.getButton()));
-        scene.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> root.getKeys().remove(e.getButton()));
+            // ---- SCENE-LEVEL INPUT (reliable focus) ----
+            scene.addEventFilter(KeyEvent.KEY_PRESSED,  e -> root.getKeys().add(e.getCode()));
+            scene.addEventFilter(KeyEvent.KEY_RELEASED, e -> root.getKeys().remove(e.getCode()));
+            scene.addEventFilter(MouseEvent.MOUSE_PRESSED,  e -> root.getKeys().add(e.getButton()));
+            scene.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> root.getKeys().remove(e.getButton()));
 
-        // Keep keyboard focus on the game whenever you click inside the window
-        scene.addEventFilter(MouseEvent.MOUSE_CLICKED, e -> root.requestFocus());
+            // Keep keyboard focus on the game whenever you click inside the window
+            scene.addEventFilter(MouseEvent.MOUSE_CLICKED, e -> root.requestFocus());
 
-        primaryStage.setTitle("Contre tro to!");
-        primaryStage.setScene(scene);
-        primaryStage.setResizable(false);
-        primaryStage.show();
+            primaryStage.setTitle("Contre tro to!");
+            primaryStage.setScene(scene);
+            primaryStage.setResizable(false);
+            primaryStage.show();
 
-        // make sure focus starts on the game
-        root.requestFocus();
+            // make sure focus starts on the game
+            root.requestFocus();
 
-        // Loops
-        GameLoop gameLoop = new GameLoop(root);
-        DrawingLoop drawingLoop = new DrawingLoop(root);
-        Thread gameThread = new Thread(gameLoop, "GameLoopThread");
-        Thread drawThread = new Thread(drawingLoop, "DrawingLoopThread");
-        gameThread.setDaemon(true);
-        drawThread.setDaemon(true);
-        gameThread.start();
-        drawThread.start();
+            // Loops
+            GameLoop gameLoop = new GameLoop(root);
+            DrawingLoop drawingLoop = new DrawingLoop(root);
+            Thread gameThread = new Thread(gameLoop, "GameLoopThread");
+            Thread drawThread = new Thread(drawingLoop, "DrawingLoopThread");
+            gameThread.setDaemon(true);
+            drawThread.setDaemon(true);
+            gameThread.start();
+            drawThread.start();
 
-        primaryStage.setOnCloseRequest(evt -> {
-            try { gameLoop.stop(); } catch (Throwable ignore) {}
-            try { drawingLoop.stop(); } catch (Throwable ignore) {}
-            try { gameThread.join(150); } catch (InterruptedException ignore) {}
-            try { drawThread.join(150); } catch (InterruptedException ignore) {}
-            Platform.exit();
-        });
+            primaryStage.setOnCloseRequest(evt -> {
+                try { gameLoop.stop(); } catch (Throwable ignore) {}
+                try { drawingLoop.stop(); } catch (Throwable ignore) {}
+                try { gameThread.join(150); } catch (InterruptedException ignore) {}
+                try { drawThread.join(150); } catch (InterruptedException ignore) {}
+                Platform.exit();
+            });
+
+        } catch (Throwable ex) {
+            // Wrap anything fatal during startup so our handler prints a friendly message
+            throw new GameException("Failed to start the game (missing assets or setup issue).", ex);
+        }
     }
 }

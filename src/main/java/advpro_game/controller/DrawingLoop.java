@@ -3,145 +3,104 @@ package advpro_game.controller;
 import advpro_game.model.Bullet;
 import advpro_game.model.Enemy;
 import advpro_game.model.GameCharacter;
-import advpro_game.model.Platform;
 import advpro_game.view.GameStage;
-import javafx.geometry.Rectangle2D;
-import javafx.scene.paint.Color;
-import javafx.scene.shape.Rectangle;
-
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
 
 public class DrawingLoop implements Runnable {
     private final GameStage gameStage;
-    private final int frameRate;
-    private final double intervalMs;
+    private final int frameRate = 60;
+    private final float interval = 1000.0f / frameRate;
     private volatile boolean running = true;
 
-    // Overlay hitbox rectangles for each character
-    private final Map<GameCharacter, Rectangle> boxes = new HashMap<>();
+    public DrawingLoop(GameStage gameStage) { this.gameStage = gameStage; }
+    public void stop() { running = false; }
 
-    public DrawingLoop(GameStage gameStage) {
-        this.gameStage = gameStage;
-        this.frameRate = 60;
-        this.intervalMs = 1000.0 / frameRate;
+    private void stepCharacters(double dtMs) {
+        for (GameCharacter c : gameStage.getGameCharacterList()) {
+            c.repaint(dtMs);
+            c.checkPlatformCollision(gameStage.getPlatforms());
+            c.checkReachHighest();
+            c.checkReachFloor();
+
+            // hard clamp to world (replaces old checkReachGameWall)
+            int x = c.getX();
+            int w = c.getCharacterWidth();
+            if (x < 0) c.setX(0);
+            else if (x + w > GameStage.WIDTH) c.setX(GameStage.WIDTH - w);
+        }
+    }
+
+    private void stepBullets(double dtSec) {
+        for (Bullet b : new java.util.ArrayList<>(gameStage.getBullets())) {
+            b.update(dtSec);
+
+            // cull offscreen
+            if (b.getX() < -120 || b.getX() > GameStage.WIDTH + 120 ||
+                    b.getY() < -120 || b.getY() > GameStage.HEIGHT + 240) {
+                gameStage.removeBullet(b); // FX-thread safe inside GameStage
+                continue;
+            }
+
+            boolean hit = false;
+            for (Enemy e : gameStage.getEnemies()) {
+                if (b.getHitbox().intersects(e.getHitbox())) {
+                    boolean dead = e.hit(b.getDamage());
+
+                    // score (player 0)
+                    if (!gameStage.getGameCharacterList().isEmpty()) {
+                        var p = gameStage.getGameCharacterList().get(0);
+                        p.addScore(dead ? 20 : 10);
+                    }
+
+                    // Show small hit flash (FX-thread safe helper)
+                    gameStage.showHitFlash(b.getX(), b.getY());
+
+                    gameStage.removeBullet(b);
+                    hit = true;
+                    break;
+                }
+            }
+            if (hit) continue;
+        }
+    }
+
+    private void paintDebug() {
+        javafx.application.Platform.runLater(() -> {
+            var gc = gameStage.getDebugGC();
+            gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);
+
+            // platforms
+            for (var p : gameStage.getPlatforms()) {
+                var r = p.getHitbox();
+                gc.setStroke(p.isSolid() ? javafx.scene.paint.Color.RED
+                        : javafx.scene.paint.Color.CYAN);
+                gc.strokeRect(r.getMinX(), r.getMinY(), r.getWidth(), r.getHeight());
+            }
+            // character hitboxes
+            gc.setStroke(javafx.scene.paint.Color.LIME);
+            for (var c : gameStage.getGameCharacterList()) {
+                var hb = c.getHitbox();
+                gc.strokeRect(hb.getMinX(), hb.getMinY(), hb.getWidth(), hb.getHeight());
+            }
+        });
     }
 
     @Override
     public void run() {
         long last = System.nanoTime();
         while (running) {
-            long start = System.nanoTime();
+            long now = System.nanoTime();
+            double dtMs  = (now - last) / 1_000_000.0;
+            double dtSec = dtMs / 1000.0;
+            last = now;
 
-            // Everything in this loop that touches JavaFX scene must run on FX thread
-            javafx.application.Platform.runLater(this::drawFrameOnFxThread);
+            // slow-mo support (optional): scale your dt if you want
+            stepCharacters(dtMs);
+            stepBullets(dtSec);
+            paintDebug();
 
-            // Fixed timestep sleep
-            long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
-            long sleepMs = (long)Math.max(1, Math.round(intervalMs - elapsedMs));
+            long frameTime = (System.nanoTime() - now)/1_000_000L;
+            long sleepMs = Math.max(1, (long)interval - frameTime);
             try { Thread.sleep(sleepMs); } catch (InterruptedException ignored) {}
-            last = start;
-        }
-    }
-
-    public void stop() { running = false; }
-
-    // ===== FX-thread work below =====
-    private void drawFrameOnFxThread() {
-        ensureOverlayBoxes();
-        syncOverlayBoxes();
-        resolveBulletEnemyHits();  // keep this here so hits are responsive
-        drawDebugCanvas();
-    }
-
-    /** Create overlay rectangles for each character (once). */
-    private void ensureOverlayBoxes() {
-        var overlay = gameStage.getDBoverlay();
-        var chars = gameStage.getGameCharacterList();
-        if (boxes.size() == chars.size()) return;
-
-        for (GameCharacter gc : chars) {
-            if (boxes.containsKey(gc)) continue;
-            Rectangle r = new Rectangle();
-            r.setFill(Color.TRANSPARENT);
-            r.setStroke(Color.RED);
-            r.setStrokeWidth(1.5);
-            r.setMouseTransparent(true);
-            boxes.put(gc, r);
-            overlay.getChildren().add(r);
-        }
-    }
-
-    /** Keep overlay rectangles aligned to each character’s hitbox. */
-    private void syncOverlayBoxes() {
-        for (GameCharacter gc : gameStage.getGameCharacterList()) {
-            Rectangle2D hb = gc.getHitbox();
-            Rectangle r = boxes.get(gc);
-            if (r == null) continue;
-            r.setX(hb.getMinX());
-            r.setY(hb.getMinY());
-            r.setWidth(hb.getWidth());
-            r.setHeight(hb.getHeight());
-        }
-    }
-
-    /** Check bullet→enemy collisions, remove bullets on hit, call enemy.hit(). */
-    private void resolveBulletEnemyHits() {
-        var bullets = gameStage.getBullets();
-        var enemies = gameStage.getEnemies();
-
-        Iterator<Bullet> it = bullets.iterator();
-        while (it.hasNext()) {
-            Bullet b = it.next();
-            Rectangle2D bb = b.getHitbox();
-
-            boolean removed = false;
-            for (Enemy e : enemies) {
-                if (bb.intersects(e.getHitbox())) {
-                    e.hit();
-                    gameStage.getChildren().remove(b.getNode());
-                    it.remove();
-                    removed = true;
-                    break;
-                }
-            }
-            if (removed) continue;
-        }
-    }
-
-    /** Draw platforms + hitboxes to the debug canvas. */
-    private void drawDebugCanvas() {
-        var gc = gameStage.getDebugGC();
-        gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);
-
-        // Platforms
-        for (Platform p : gameStage.getPlatforms()) {
-            Rectangle2D r = p.getHitbox();
-            gc.setStroke(p.isSolid() ? Color.RED : Color.CYAN);
-            gc.strokeRect(r.getMinX(), r.getMinY(), r.getWidth(), r.getHeight());
-        }
-
-        // Characters
-        gc.setStroke(Color.LIME);
-        for (GameCharacter c : gameStage.getGameCharacterList()) {
-            Rectangle2D hb = c.getHitbox();
-            gc.strokeRect(hb.getMinX(), hb.getMinY(), hb.getWidth(), hb.getHeight());
-        }
-
-        // Bullets
-        gc.setStroke(Color.YELLOW);
-        for (Bullet b : gameStage.getBullets()) {
-            Rectangle2D hb = b.getHitbox();
-            gc.strokeRect(hb.getMinX(), hb.getMinY(), hb.getWidth(), hb.getHeight());
-        }
-
-        // Enemies
-        gc.setStroke(Color.ORANGE);
-        for (Enemy e : gameStage.getEnemies()) {
-            Rectangle2D hb = e.getHitbox();
-            gc.strokeRect(hb.getMinX(), hb.getMinY(), hb.getWidth(), hb.getHeight());
         }
     }
 }

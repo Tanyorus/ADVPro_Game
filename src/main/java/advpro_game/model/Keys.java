@@ -14,8 +14,8 @@ public class Keys {
 
     /** Call ONCE per frame before you read justPressed/justReleased. */
     public void beginFrame() {
-        keysDownPrev.clear();     keysDownPrev.addAll(keysDown);
-        mouseDownPrev.clear();    mouseDownPrev.addAll(mouseDown);
+        //keysDownPrev.clear();     keysDownPrev.addAll(keysDown);
+        //mouseDownPrev.clear();    mouseDownPrev.addAll(mouseDown);
     }
 
     // ---------- Keyboard ----------
@@ -65,4 +65,5 @@ public class Keys {
         mouseDown.clear();
         mouseDownPrev.clear();
     }
+
 }
