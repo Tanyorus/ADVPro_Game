@@ -22,9 +22,9 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class GameStage extends Pane {
-    public static final int WIDTH = 800;
-    public static final int HEIGHT = 400;
-    public static final int GROUND = 350;
+    public static int WIDTH = 800;
+    public static int HEIGHT = 400;
+    public static int GROUND = 365;
 
     // ---- Layers ----
     private final Pane backgroundLayer = new Pane();
@@ -82,9 +82,6 @@ public class GameStage extends Pane {
         overlayLayer.setMouseTransparent(true);
         debugCanvas.setMouseTransparent(true);
 
-        // ---- Ground ----
-        platforms.add(Platform.solid(0, GROUND, WIDTH, 100));
-
         // ---- Character ----
         GameCharacter p1 = new GameCharacter(
                 0, 30, 30,
@@ -139,7 +136,6 @@ public class GameStage extends Pane {
     public void setStage(int stageNumber) {
         platforms.clear();
         platforms.add(Platform.solid(0, GROUND, WIDTH, 100));
-
         switch (stageNumber) {
             case 1 -> setupStage1Platforms();
             case 2 -> setupStage2Platforms();
@@ -150,21 +146,19 @@ public class GameStage extends Pane {
     private void setupStage1Platforms() {
         platforms.add(Platform.oneWay(220, 270, 190, 30));
         platforms.add(Platform.oneWay(476, 300, 60, 30));
-        platforms.add(Platform.oneWay(0, 0, 80, 30));
+        platforms.add(Platform.oneWay(415, 240, 60, 30));
+        platforms.add(Platform.oneWay(30, 240, 120, 30));
+        platforms.add(Platform.oneWay(160, 180, 250, 30));
+
     }
 
     private void setupStage2Platforms() {
-        platforms.add(Platform.oneWay(50, 280, 150, 20));
-        platforms.add(Platform.oneWay(250, 240, 150, 20));
-        platforms.add(Platform.oneWay(450, 200, 150, 20));
-        platforms.add(Platform.oneWay(650, 160, 130, 20));
+        platforms.add(Platform.oneWay(0, 270, 250, 20));
+        platforms.add(Platform.oneWay(0, 177, 100, 20));
     }
 
     private void setupStage3Platforms() {
-        platforms.add(Platform.oneWay(100, 250, 200, 25));
-        platforms.add(Platform.oneWay(350, 180, 100, 20));
-        platforms.add(Platform.oneWay(500, 250, 200, 25));
-        platforms.add(Platform.oneWay(200, 120, 150, 18));
+        platforms.add(Platform.oneWay(250, 300, 600, 20));
     }
 
 
