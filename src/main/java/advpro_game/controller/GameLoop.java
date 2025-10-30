@@ -73,6 +73,26 @@ public class GameLoop implements Runnable {
         }
     }
 
+    private void updateEnemies(double dtSeconds) {
+        if (gameStage.getGameCharacterList().isEmpty()) return;
+
+        GameCharacter player = gameStage.getGameCharacterList().get(0);
+
+        System.out.println("Updating " + gameStage.getEnemies().size() + " enemies");
+
+        for (var enemy : gameStage.getEnemies()) {
+            // Update enemy movement
+            enemy.update(dtSeconds, player);
+
+            // Try to shoot at player
+            Bullet b = enemy.tryShoot(player);
+            if (b != null) {
+                gameStage.addBullet(b);
+                System.out.println("Enemy shot a bullet!");
+            }
+        }
+    }
+
     private void checkCharacterEnemyCollisions() {
         long now = System.currentTimeMillis();
 
@@ -126,6 +146,7 @@ public class GameLoop implements Runnable {
 
             updateBullets(dt);
             updateScore(gameStage.getGameCharacterList());
+            updateEnemies(dt);
             checkCharacterEnemyCollisions();
             stageManager.update();
 

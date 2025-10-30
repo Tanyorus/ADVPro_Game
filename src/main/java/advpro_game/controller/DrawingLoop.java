@@ -21,7 +21,7 @@ public class DrawingLoop implements Runnable {
             c.checkReachHighest();
             c.checkReachFloor();
 
-            // hard clamp to world (replaces old checkReachGameWall)
+            // hard clamp to world
             int x = c.getX();
             int w = c.getCharacterWidth();
             if (x < 0) c.setX(0);
@@ -36,29 +36,52 @@ public class DrawingLoop implements Runnable {
             // cull offscreen
             if (b.getX() < -120 || b.getX() > GameStage.WIDTH + 120 ||
                     b.getY() < -120 || b.getY() > GameStage.HEIGHT + 240) {
-                gameStage.removeBullet(b); // FX-thread safe inside GameStage
+                gameStage.removeBullet(b);
                 continue;
             }
 
             boolean hit = false;
-            for (Enemy e : gameStage.getEnemies()) {
-                if (b.getHitbox().intersects(e.getHitbox())) {
-                    boolean dead = e.hit(b.getDamage());
 
-                    // score (player 0)
-                    if (!gameStage.getGameCharacterList().isEmpty()) {
-                        var p = gameStage.getGameCharacterList().get(0);
-                        p.addScore(dead ? 20 : 10);
+            // Player bullets hit enemies
+            if (!b.isEnemyBullet()) {
+                for (Enemy e : gameStage.getEnemies()) {
+                    if (b.getHitbox().intersects(e.getHitbox())) {
+                        boolean dead = e.hit(b.getDamage());
+
+                        // score (player 0)
+                        if (!gameStage.getGameCharacterList().isEmpty()) {
+                            var p = gameStage.getGameCharacterList().get(0);
+                            p.addScore(dead ? 20 : 10);
+                        }
+
+                        gameStage.showHitFlash(b.getX(), b.getY());
+                        gameStage.removeBullet(b);
+                        hit = true;
+                        break;
                     }
-
-                    // Show small hit flash (FX-thread safe helper)
-                    gameStage.showHitFlash(b.getX(), b.getY());
-
-                    gameStage.removeBullet(b);
-                    hit = true;
-                    break;
                 }
             }
+            // Enemy bullets hit player
+            else {
+                for (GameCharacter c : gameStage.getGameCharacterList()) {
+                    if (b.getHitbox().intersects(c.getHitbox())) {
+                        c.loseLife();
+                        gameStage.updateLivesHUD(c.getLives());
+
+                        if (c.getLives() > 0) {
+                            c.respawn();
+                        } else {
+                            System.out.println("Game Over - Hit by enemy bullet!");
+                        }
+
+                        gameStage.showHitFlash(b.getX(), b.getY());
+                        gameStage.removeBullet(b);
+                        hit = true;
+                        break;
+                    }
+                }
+            }
+
             if (hit) continue;
         }
     }
@@ -93,7 +116,6 @@ public class DrawingLoop implements Runnable {
             double dtSec = dtMs / 1000.0;
             last = now;
 
-            // slow-mo support (optional): scale your dt if you want
             stepCharacters(dtMs);
             stepBullets(dtSec);
             paintDebug();

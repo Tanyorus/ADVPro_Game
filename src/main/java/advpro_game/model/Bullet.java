@@ -15,21 +15,28 @@ public class Bullet {
     private double vx, vy;       // normalized direction
     private double speed;        // px/sec
     private int damage;
+    private boolean isEnemyBullet = false;  // NEW: track bullet ownership
 
     private Image img;
     private ImageView node;      // scene-graph node
     private double baseW = 8, baseH = 8;
-    private double scale = 1.6;  // <— medium size (tweak 1.3..2.0)
+    private double scale = 1.6;
 
     public Bullet(double x, double y, double dirX, double dirY, double speed, int damage) {
-        this(x, y, dirX, dirY, speed, damage, 1.6);
+        this(x, y, dirX, dirY, speed, damage, 1.6, false);
     }
 
     public Bullet(double x, double y, double dirX, double dirY, double speed, int damage, double renderScale) {
+        this(x, y, dirX, dirY, speed, damage, renderScale, false);
+    }
+
+    // NEW: Constructor with enemy bullet flag
+    public Bullet(double x, double y, double dirX, double dirY, double speed, int damage, double renderScale, boolean isEnemyBullet) {
         this.x = x; this.y = y;
         this.speed = speed;
         this.damage = damage;
         this.scale = renderScale;
+        this.isEnemyBullet = isEnemyBullet;
 
         double len = Math.hypot(dirX, dirY);
         if (len == 0) { dirX = 1; dirY = 0; len = 1; }
@@ -47,8 +54,8 @@ public class Bullet {
                 ((ImageView)node).setFitHeight(baseH * scale);
                 node.relocate(x - (baseW*scale)/2.0, y - (baseH*scale)/2.0);
             } else {
-                Logger.getLogger(Bullet.class.getName()).warning("Bullet.jpeg not found; using fallback circle.");
-                node = new ImageView(); // placeholder
+                Logger.getLogger(Bullet.class.getName()).warning("Bullet.png not found; using fallback circle.");
+                node = new ImageView();
                 node.setManaged(false);
                 node.relocate(x - (baseW*scale)/2.0, y - (baseH*scale)/2.0);
             }
@@ -62,10 +69,10 @@ public class Bullet {
 
     // convenience overloads
     public Bullet(double x, double y, int dirSign) {
-        this(x, y, (dirSign >= 0? 1.0 : -1.0), 0.0, 480.0, 1, 1.6);
+        this(x, y, (dirSign >= 0? 1.0 : -1.0), 0.0, 480.0, 1, 1.6, false);
     }
     public Bullet(double x, double y, double dirX, double dirY) {
-        this(x, y, dirX, dirY, 480.0, 1, 1.6);
+        this(x, y, dirX, dirY, 480.0, 1, 1.6, false);
     }
 
     public void update(double dtSeconds) {
@@ -85,11 +92,12 @@ public class Bullet {
     }
 
     public Rectangle2D getHitbox() {
-        return new Rectangle2D(x - (baseW*scale)/2.0, y - (baseH*scale)/2.0, baseW*scale, baseH*scale);
+        return new Rectangle2D(x - (baseW*scale)/2.0, y - (baseW*scale)/2.0, baseW*scale, baseH*scale);
     }
 
     public Node getNode() { return node; }
     public double getX() { return x; }
     public double getY() { return y; }
     public int getDamage() { return damage; }
+    public boolean isEnemyBullet() { return isEnemyBullet; }  // NEW: getter
 }
