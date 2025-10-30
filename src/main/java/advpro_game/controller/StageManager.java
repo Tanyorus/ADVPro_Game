@@ -12,19 +12,11 @@ public class StageManager {
     private int currentStage = 1;
     private boolean bossSpawned = false;
 
-    // {minionCount, bossHpBonus, stageIndex}
-    private final int[][] stages = {
-            {4, 1, 0, 1},
-            {6, 1, 4, 2},
-            {8, 1, 8, 3}
-    };
-
     public StageManager(GameStage stage) { this.stage = stage; }
 
     public void start() {
-        setStageBackgroundAndRealign(stages[currentStage - 1][3]);
-        spawnMinionsForStage();
-        spawnEliteMinionsForStage();
+        setStageBackgroundAndRealign(currentStage);
+        spawnEnemiesForStage();
     }
 
     public void update() {
@@ -42,12 +34,11 @@ public class StageManager {
             }
         } else {
             if (noEnemies) {
-                if (currentStage < stages.length) {
+                if (currentStage < 3) {
                     currentStage++;
                     bossSpawned = false;
-                    setStageBackgroundAndRealign(stages[currentStage - 1][3]);
-                    spawnMinionsForStage();
-                    spawnEliteMinionsForStage();
+                    setStageBackgroundAndRealign(currentStage);
+                    spawnEnemiesForStage();
                 } else {
                     LOG.info("All stages cleared!");
                 }
@@ -55,34 +46,89 @@ public class StageManager {
         }
     }
 
-    private void spawnMinionsForStage() {
-        int minionCount = stages[currentStage - 1][0];
-        double y = GameStage.GROUND - 50;
-        for (int i = 0; i < minionCount; i++) {
-            double x = 150 + i * 60;
-            stage.addEnemy(new Minion(x, y));
+    private void spawnEnemiesForStage() {
+        switch (currentStage) {
+            case 1 -> spawnStage1();
+            case 2 -> spawnStage2();
+            case 3 -> spawnStage3();
         }
     }
 
-    private void spawnEliteMinionsForStage() {
-        int minionCount = stages[currentStage - 1][1];
-        double y = GameStage.GROUND - 60;
-        for (int i = 0; i < minionCount; i++) {
-            double x = 400 + i * 60;
-            stage.addEnemy(new EliteMinion(x, y));
-        }
+    // ========== STAGE 1 ENEMY POSITIONS ==========
+    private void spawnStage1() {
+        // Spawn 4 Minions at specific positions
+        stage.addEnemy(new Minion(150, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(250, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(350, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(450, GameStage.GROUND - 50));
+
+        // Spawn 1 Elite Minion
+        stage.addEnemy(new EliteMinion(550, GameStage.GROUND - 60));
     }
 
+    // ========== STAGE 2 ENEMY POSITIONS ==========
+    private void spawnStage2() {
+        // Spawn 6 Minions at specific positions
+        stage.addEnemy(new Minion(100, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(200, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(300, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(400, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(500, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(600, GameStage.GROUND - 50));
+
+        // Spawn 1 Elite Minion
+        stage.addEnemy(new EliteMinion(700, GameStage.GROUND - 60));
+    }
+
+    // ========== STAGE 3 ENEMY POSITIONS ==========
+    private void spawnStage3() {
+        // Spawn 8 Minions at specific positions
+        stage.addEnemy(new Minion(120, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(200, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(280, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(360, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(440, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(520, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(600, GameStage.GROUND - 50));
+        stage.addEnemy(new Minion(680, GameStage.GROUND - 50));
+
+        // Spawn 1 Elite Minion
+        stage.addEnemy(new EliteMinion(750, GameStage.GROUND - 60));
+    }
+
+    // ========== BOSS SPAWN POSITIONS ==========
     private void spawnBossForStage() {
-        int hpBonus = stages[currentStage - 1][2];
-        Boss b = new Boss(600, GameStage.GROUND - 72);
-        b.addHp(hpBonus);
-        stage.addEnemy(b);
+        Boss boss;
+        switch (currentStage) {
+            case 1 -> {
+                // Stage 1 Boss: Right side
+                boss = new Boss(650, GameStage.GROUND - 72);
+                boss.addHp(0);
+            }
+            case 2 -> {
+                // Stage 2 Boss: Center
+                boss = new Boss(400, GameStage.GROUND - 72);
+                boss.addHp(4);
+            }
+            case 3 -> {
+                // Stage 3 Boss: Left side
+                boss = new Boss(200, GameStage.GROUND - 72);
+                boss.addHp(8);
+            }
+            default -> {
+                boss = new Boss(600, GameStage.GROUND - 72);
+            }
+        }
+
+        stage.addEnemy(boss);
+        LOG.info("Stage " + currentStage + " Boss spawned at (" + boss.getX() + ", " + boss.getY() + ") with HP: " + boss.getHp());
     }
 
     // helper: use existing API on GameStage
-    private void setStageBackgroundAndRealign(int index) {
-        stage.setStageBackground(index);
+    private void setStageBackgroundAndRealign(int stageIndex) {
+        stage.setStageBackground(stageIndex);
+        stage.setStage(stageIndex);  // ADD THIS LINE - loads stage-specific platforms
+
         GameCharacter p = stage.getPlayer();
         p.setX(30);
         p.setY(GameStage.GROUND - p.getCharacterHeight());
@@ -91,4 +137,3 @@ public class StageManager {
         stage.updateLivesHUD(p.getLives());
     }
 }
-

@@ -82,10 +82,8 @@ public class GameStage extends Pane {
         overlayLayer.setMouseTransparent(true);
         debugCanvas.setMouseTransparent(true);
 
-        // ---- Platforms ----
-        platforms.add(Platform.solid(0, GROUND, WIDTH, 100)); // ground
-        platforms.add(Platform.oneWay(10, 270, 400, 30));     // ledge 1
-        platforms.add(Platform.oneWay(420, 200, 200, 10));    // ledge 2
+        // ---- Ground ----
+        platforms.add(Platform.solid(0, GROUND, WIDTH, 100));
 
         // ---- Character ----
         GameCharacter p1 = new GameCharacter(
@@ -137,6 +135,38 @@ public class GameStage extends Pane {
         setOnMouseReleased(e -> keys.remove(e.getButton()));
         requestFocus();
     }
+
+    public void setStage(int stageNumber) {
+        platforms.clear();
+        platforms.add(Platform.solid(0, GROUND, WIDTH, 100));
+
+        switch (stageNumber) {
+            case 1 -> setupStage1Platforms();
+            case 2 -> setupStage2Platforms();
+            case 3 -> setupStage3Platforms();
+            default -> setupStage1Platforms();
+        }
+    }
+    private void setupStage1Platforms() {
+        platforms.add(Platform.oneWay(220, 270, 190, 30));
+        platforms.add(Platform.oneWay(476, 300, 60, 30));
+        platforms.add(Platform.oneWay(0, 0, 80, 30));
+    }
+
+    private void setupStage2Platforms() {
+        platforms.add(Platform.oneWay(50, 280, 150, 20));
+        platforms.add(Platform.oneWay(250, 240, 150, 20));
+        platforms.add(Platform.oneWay(450, 200, 150, 20));
+        platforms.add(Platform.oneWay(650, 160, 130, 20));
+    }
+
+    private void setupStage3Platforms() {
+        platforms.add(Platform.oneWay(100, 250, 200, 25));
+        platforms.add(Platform.oneWay(350, 180, 100, 20));
+        platforms.add(Platform.oneWay(500, 250, 200, 25));
+        platforms.add(Platform.oneWay(200, 120, 150, 18));
+    }
+
 
     // ---------- Slow-time ----------
     public void tickSlowMo(boolean wantSlow, double dtSeconds) {
