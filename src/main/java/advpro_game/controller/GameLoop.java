@@ -10,11 +10,17 @@ import java.util.List;
 
 public class GameLoop implements Runnable {
     private final GameStage gameStage;
+    private final StageManager stageManager;
     private final int frameRate = 60;
     private final float interval = 1000.0f / frameRate;
     private volatile boolean running = true;
+    private long invincibleUntil = 0;  // Invincibility timer
 
-    public GameLoop(GameStage gameStage) { this.gameStage = gameStage; }
+    public GameLoop(GameStage gameStage) {
+        this.gameStage = gameStage;
+        this.stageManager = new StageManager(gameStage);
+        this.stageManager.start();
+    }
 
     public void stop() { running = false; }
 
@@ -36,19 +42,17 @@ public class GameLoop implements Runnable {
             else                   c.stop();
 
             if (up) c.jump();
-            // Prone when pressing down without move OR while holding down
             if ((down && !left && !right) || (down && !(up))) c.prone();
 
             c.handleDownKey(down);
 
-            // Fire (space or mouse)
             Bullet b = c.tryCreateBullet(gameStage.getKeys());
             if (b != null) gameStage.addBullet(b);
         }
     }
 
     private void updateBullets(double dtSeconds) {
-        dtSeconds *= gameStage.getTimeScale(); // slow-time
+        dtSeconds *= gameStage.getTimeScale();
         var bullets = gameStage.getBullets();
         Iterator<Bullet> it = bullets.iterator();
         while (it.hasNext()) {
@@ -63,11 +67,39 @@ public class GameLoop implements Runnable {
     }
 
     private void updateScore(List<GameCharacter> chars) {
-        // Single player HUD score
         if (!gameStage.getScoreList().isEmpty() && !chars.isEmpty()) {
             gameStage.getScoreList().get(0).setPoint(chars.get(0).getScore());
-            // update lives HUD too
             gameStage.updateLivesHUD(chars.get(0).getLives());
+        }
+    }
+
+    private void checkCharacterEnemyCollisions() {
+        long now = System.currentTimeMillis();
+
+        // Skip collision check if player is invincible
+        if (now < invincibleUntil) {
+            return;
+        }
+
+        for (GameCharacter c : gameStage.getGameCharacterList()) {
+            for (var e : new java.util.ArrayList<>(gameStage.getEnemies())) {
+                if (c.getHitbox().intersects(e.getHitbox())) {
+                    c.loseLife();
+                    gameStage.updateLivesHUD(c.getLives());
+
+                    // Always respawn when hit, even if lives reach 0
+                    c.respawn();
+                    // Give 1.5 seconds of invincibility after respawn
+                    invincibleUntil = now + 1500;
+
+                    if (c.getLives() <= 0) {
+                        System.out.println("Game Over!");
+                    }
+
+                    // Enemy does NOT die - just the player takes damage
+                    break;
+                }
+            }
         }
     }
 
@@ -77,26 +109,25 @@ public class GameLoop implements Runnable {
 
         while (running) {
             long now = System.nanoTime();
-            double dt = (now - last) / 1_000_000_000.0;  // seconds
+            double dt = (now - last) / 1_000_000_000.0;
             last = now;
 
-            // Slow-time: hold LEFT SHIFT
             boolean wantSlow = gameStage.getKeys().isPressed(KeyCode.SHIFT);
             gameStage.tickSlowMo(wantSlow, dt);
 
             updateCharacters(gameStage.getGameCharacterList());
 
-            // Physics & collisions (platforms)
             for (GameCharacter c : gameStage.getGameCharacterList()) {
                 c.checkPlatformCollision(gameStage.getPlatforms());
                 c.checkReachHighest();
                 c.checkReachFloor();
-                // Advance animation/position with time scale for animations
                 c.repaint(16.7 * gameStage.getTimeScale());
             }
 
             updateBullets(dt);
             updateScore(gameStage.getGameCharacterList());
+            checkCharacterEnemyCollisions();
+            stageManager.update();
 
             long frameTime = (System.nanoTime() - now) / 1_000_000L;
             long sleepMs = (long) interval - frameTime;

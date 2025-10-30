@@ -21,8 +21,13 @@ public class Platform {
     public static Platform oneWay(double x, double y, double w, double h) { return new Platform(x, y, w, h, false); }
 
     // === API used by GameCharacter / DrawingLoop ===
-    public Rectangle2D getHitbox() { return hitbox; }
-    public boolean isSolid()       { return solid;  }
+    public Rectangle2D getHitbox() {
+        return hitbox;
+    }
+
+    public boolean isSolid()       {
+        return solid;
+    }
 
     // Optional convenience getters
     public double getX()      { return hitbox.getMinX(); }

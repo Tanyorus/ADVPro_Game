@@ -14,16 +14,17 @@ public class StageManager {
 
     // {minionCount, bossHpBonus, stageIndex}
     private final int[][] stages = {
-            {4, 0, 1},
-            {6, 4, 2},
-            {8, 8, 3}
+            {4, 1, 0, 1},
+            {6, 1, 4, 2},
+            {8, 1, 8, 3}
     };
 
     public StageManager(GameStage stage) { this.stage = stage; }
 
     public void start() {
-        setStageBackgroundAndRealign(stages[currentStage - 1][2]);
+        setStageBackgroundAndRealign(stages[currentStage - 1][3]);
         spawnMinionsForStage();
+        spawnEliteMinionsForStage();
     }
 
     public void update() {
@@ -44,10 +45,11 @@ public class StageManager {
                 if (currentStage < stages.length) {
                     currentStage++;
                     bossSpawned = false;
-                    setStageBackgroundAndRealign(stages[currentStage - 1][2]);
+                    setStageBackgroundAndRealign(stages[currentStage - 1][3]);
                     spawnMinionsForStage();
+                    spawnEliteMinionsForStage();
                 } else {
-                    LOG.info("All stages cleared! 🎉");
+                    LOG.info("All stages cleared!");
                 }
             }
         }
@@ -55,15 +57,24 @@ public class StageManager {
 
     private void spawnMinionsForStage() {
         int minionCount = stages[currentStage - 1][0];
-        double y = GameStage.GROUND - 36;
+        double y = GameStage.GROUND - 50;
         for (int i = 0; i < minionCount; i++) {
-            double x = 100 + i * 60;
+            double x = 150 + i * 60;
             stage.addEnemy(new Minion(x, y));
         }
     }
 
+    private void spawnEliteMinionsForStage() {
+        int minionCount = stages[currentStage - 1][1];
+        double y = GameStage.GROUND - 60;
+        for (int i = 0; i < minionCount; i++) {
+            double x = 400 + i * 60;
+            stage.addEnemy(new EliteMinion(x, y));
+        }
+    }
+
     private void spawnBossForStage() {
-        int hpBonus = stages[currentStage - 1][1];
+        int hpBonus = stages[currentStage - 1][2];
         Boss b = new Boss(600, GameStage.GROUND - 72);
         b.addHp(hpBonus);
         stage.addEnemy(b);
@@ -80,3 +91,4 @@ public class StageManager {
         stage.updateLivesHUD(p.getLives());
     }
 }
+

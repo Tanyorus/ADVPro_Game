@@ -36,7 +36,7 @@ public class Bullet {
         this.vx = dirX / len;
         this.vy = dirY / len;
 
-        try (InputStream in = Launcher.class.getResourceAsStream("/advpro_game/assets/Bullet.jpeg")) {
+        try (InputStream in = Launcher.class.getResourceAsStream("/advpro_game/assets/Bullet.png")) {
             if (in != null) {
                 img = new Image(in);
                 baseW = img.getWidth();
