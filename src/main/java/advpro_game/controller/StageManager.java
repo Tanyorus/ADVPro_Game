@@ -102,12 +102,27 @@ public class StageManager {
         switch (currentStage) {
             case 1 -> {
                 // Stage 1 Boss: Right side
-                boss = new Boss(650, GameStage.GROUND - 72);
+                boss = new Boss(590, GameStage.GROUND - 120);
                 boss.addHp(0);
             }
             case 2 -> {
                 // Stage 2 Boss: Center
-                boss = new Boss(400, GameStage.GROUND - 72);
+                boss = new Boss(550, GameStage.GROUND - 380,  170, 170, "/advpro_game/assets/bossjava.png",
+                        2, 2, 1, 112, 112, 1);
+                boss.setCustomAnimatedBullet(
+                        "/advpro_game/assets/java_bullet.png",  // sprite sheet path
+                        2.0,                                         // scale (makes it 32x32)
+                        4,                                           // frame count
+                        4,                                           // columns in sprite sheet
+                        1,                                           // rows in sprite sheet
+                        25,                                          // frame width (pixels)
+                        27                                           // frame height (pixels)
+                );
+                stage.addEnemy(new EliteMinion(550, GameStage.GROUND - 80, 80, 80, "/advpro_game/assets/elite_minion_2.png",
+                        3, 2, 2, 32, 32, 300));
+
+                stage.addEnemy(new EliteMinion(600, GameStage.GROUND - 60, 200));
+                stage.addEnemy(new EliteMinion(650, GameStage.GROUND - 60, 100));
                 boss.addHp(4);
             }
             case 3 -> {

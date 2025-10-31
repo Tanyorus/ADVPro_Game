@@ -237,10 +237,11 @@ public class GameStage extends Pane {
     }
     public void addEnemy(Enemy e) {
         enemies.add(e);
-        javafx.application.Platform.runLater(() -> enemyLayer.getChildren().add(e.getNode()));
+        javafx.application.Platform.runLater(() -> worldLayer.getChildren().add(e));
     }
+
     public void removeEnemy(Enemy e) {
-        javafx.application.Platform.runLater(() -> enemyLayer.getChildren().remove(e.getNode()));
+        javafx.application.Platform.runLater(() -> worldLayer.getChildren().remove(e));
         enemies.remove(e);
     }
     // FX-thread safe small impact flash on the overlay layer

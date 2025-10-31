@@ -8,7 +8,7 @@ import java.util.EnumMap;
 
 public class AnimatedSprite extends ImageView {
 
-    public enum Action {idle, run, jump, prone, shoot}
+    public enum Action {idle, run, jump, prone, shoot, javaShoot}
     /*Per-action mapping*/
     private long lastFramePrint = 0;
     private int lastFrameIndex = -1;
@@ -66,6 +66,16 @@ public class AnimatedSprite extends ImageView {
                 /*delayMs*/ 120
         ));
         setAction(Action.idle); // set initial viewport
+
+        define(Action.javaShoot, new ActionSpec(
+                startCol,  // startCol
+                startRow,  // startRow
+                Math.min(count, columns * rows),  // frames
+                startCol,  // columns
+                width, // width
+                height, // height
+                100  // delayMs (ความล่าช้าในการเปลี่ยนเฟรม)
+        ));
     }
     public void defne(Action action ,ActionSpec s){
         specs.put(action,s);

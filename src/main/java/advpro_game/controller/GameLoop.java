@@ -78,8 +78,6 @@ public class GameLoop implements Runnable {
 
         GameCharacter player = gameStage.getGameCharacterList().get(0);
 
-        System.out.println("Updating " + gameStage.getEnemies().size() + " enemies");
-
         for (var enemy : gameStage.getEnemies()) {
             // Update enemy movement
             enemy.update(dtSeconds, player);

@@ -1,33 +1,87 @@
 package advpro_game.model;
 
+import advpro_game.Launcher;
 import javafx.geometry.Rectangle2D;
-import javafx.scene.paint.Color;
+import javafx.scene.image.Image;
+import javafx.scene.layout.Pane;
 import javafx.scene.shape.Rectangle;
+import javafx.scene.paint.Color;
 
-public class Enemy {
+public class Enemy extends Pane {
     protected double x, y, w, h;
     private int hp = 1;
-    protected final Rectangle node;
+    protected AnimatedSprite sprite;
+    protected Rectangle fallbackNode;  // Fallback if no sprite
 
     // Movement
-    protected double vx = 0;  // horizontal velocity
-    protected double moveSpeed = 30.0;  // pixels per second
-    protected int direction = -1;  // -1 = left, 1 = right
+    protected double vx = 0;
+    protected double moveSpeed = 30.0;
+    protected int direction = -1;
 
     // Shooting
     protected long lastShotTime = 0;
-    protected int shootCooldownMs = 2000;  // 2 seconds between shots
-    protected double shootRange = 400;  // can shoot if player within this range
+    protected int shootCooldownMs = 2000;
+    protected double shootRange = 400;
 
-    public Enemy(double x, double y, double w, double h) {
-        this.x = x; this.y = y; this.w = w; this.h = h;
-        node = new Rectangle(w, h, Color.DARKRED);
-        node.setTranslateX(x);
-        node.setTranslateY(y);
+    public Enemy(double x, double y, double w, double h, String spritePath,
+                 int frameCount, int columns, int rows, int frameWidth, int frameHeight) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+
+        // Try to load sprite sheet
+        try {
+            Image img = new Image(Launcher.class.getResourceAsStream(spritePath));
+            sprite = new AnimatedSprite(img, frameCount, columns, rows, 0, 0, frameWidth, frameHeight);
+
+            sprite.setFitWidth(w);
+            sprite.setFitHeight(h);
+
+            getChildren().add(sprite);
+
+            sprite.define(AnimatedSprite.Action.idle, new AnimatedSprite.ActionSpec(
+                    0, 0, Math.min(frameCount, columns), columns, frameWidth, frameHeight, 150
+            ));
+            sprite.define(AnimatedSprite.Action.run, new AnimatedSprite.ActionSpec(
+                    0, 0, Math.min(frameCount, columns), columns, frameWidth, frameHeight, 100
+            ));
+
+            sprite.setAction(AnimatedSprite.Action.idle);
+
+        } catch (Exception e) {
+            System.err.println("Failed to load enemy sprite: " + spritePath + ", using fallback rectangle");
+            // Use fallback rectangle
+            fallbackNode = new Rectangle(w, h, Color.DARKRED);
+            getChildren().add(fallbackNode);
+        }
+
+        setTranslateX(x);
+        setTranslateY(y);
     }
 
-    public Rectangle2D getHitbox() { return new Rectangle2D(x, y, w, h); }
-    public Rectangle getNode() { return node; }
+    // Fallback constructor for enemies without sprites
+    public Enemy(double x, double y, double w, double h) {
+        this.x = x;
+        this.y = y;
+        this.w = w;
+        this.h = h;
+
+        // Create fallback rectangle
+        fallbackNode = new Rectangle(w, h, Color.DARKRED);
+        getChildren().add(fallbackNode);
+        setTranslateX(x);
+        setTranslateY(y);
+    }
+
+    public Rectangle2D getHitbox() {
+        return new Rectangle2D(x, y, w, h);
+    }
+
+    // For compatibility - returns the visual node
+    public Pane getNode() {
+        return this;
+    }
 
     // HP API
     public int getHp() { return hp; }
@@ -35,46 +89,59 @@ public class Enemy {
     public void addHp(int delta) { setHp(this.hp + delta); }
     public boolean isDead() { return hp <= 0; }
 
-    /** returns true if dead after hit */
     public boolean hit(int dmg) {
         setHp(hp - Math.max(0, dmg));
-        node.setFill(isDead()? Color.GRAY : Color.FIREBRICK);
+        if (isDead()) {
+            if (sprite != null) {
+                sprite.setOpacity(0.5);
+            }
+            if (fallbackNode != null) {
+                fallbackNode.setFill(Color.GRAY);
+            }
+        } else {
+            if (fallbackNode != null) {
+                fallbackNode.setFill(Color.FIREBRICK);
+            }
+        }
         return isDead();
     }
 
     // Movement API
     public void update(double dtSeconds, GameCharacter player) {
-        if (isDead()) return;  // Don't move if dead
+        if (isDead()) return;
 
-        // Simple AI: move toward player
-        double playerX = player.getX() + player.getCharacterWidth() / 2.0;  // player center
-        double enemyX = x + w / 2.0;  // enemy center
+        double playerX = player.getX() + player.getCharacterWidth() / 2.0;
+        double enemyX = x + w / 2.0;
         double dx = playerX - enemyX;
 
-        if (Math.abs(dx) > 50) {  // if not too close
+        if (Math.abs(dx) > 50 && moveSpeed > 0) {
             direction = dx > 0 ? 1 : -1;
             vx = direction * moveSpeed;
-            double oldX = x;
             x += vx * dtSeconds;
 
-            // Keep enemies within screen bounds
             if (x < 0) x = 0;
             if (x > 800 - w) x = 800 - w;
 
-            // Debug: print when enemy moves
-            if (Math.abs(x - oldX) > 0.1) {
-                System.out.println("Enemy moving: x=" + (int)x + " toward player at " + (int)playerX);
+            if (sprite != null) {
+                sprite.setAction(AnimatedSprite.Action.run);
+                javafx.application.Platform.runLater(() -> setScaleX(direction));
             }
         } else {
-            vx = 0;  // stop if close enough
+            vx = 0;
+            if (sprite != null) {
+                sprite.setAction(AnimatedSprite.Action.idle);
+            }
         }
 
-        // Update visual position on FX thread
+        if (sprite != null) {
+            sprite.update(dtSeconds * 1000);
+        }
+
         final double finalX = x;
         final double finalY = y;
         javafx.application.Platform.runLater(() -> {
-            node.setTranslateX(finalX);
-            node.setTranslateY(finalY);
+            setTranslateX(finalX);
+            setTranslateY(finalY);
         });
     }
 
@@ -82,7 +149,7 @@ public class Enemy {
     public Bullet tryShoot(GameCharacter player) {
         long now = System.currentTimeMillis();
         if (now - lastShotTime < shootCooldownMs) {
-            return null;  // cooldown not ready
+            return null;
         }
 
         double dx = player.getX() - x;
@@ -90,22 +157,20 @@ public class Enemy {
         double distance = Math.hypot(dx, dy);
 
         if (distance > shootRange) {
-            return null;  // player too far
+            return null;
         }
 
         lastShotTime = now;
 
-        // Calculate bullet spawn position (center of enemy)
         double bulletX = x + w / 2;
         double bulletY = y + h / 2;
 
-        // Shoot toward player - mark as enemy bullet
         return new Bullet(bulletX, bulletY, dx, dy, 300.0, 1, 1.6, true);
     }
 
     // Getters
     public double getX() { return x; }
     public double getY() { return y; }
-    public double getWidth() { return w; }
-    public double getHeight() { return h; }
+//    public double getWidth() { return w; }
+//    public double getHeight() { return h; }
 }

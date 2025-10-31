@@ -71,4 +71,5 @@ public class Launcher extends Application {
             throw new GameException("Failed to start the game (missing assets or setup issue).", ex);
         }
     }
+
 }
