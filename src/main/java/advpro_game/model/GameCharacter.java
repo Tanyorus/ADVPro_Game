@@ -8,34 +8,37 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.Pane;
 import javafx.util.Duration;
+import java.util.function.Consumer;
+
 import advpro_game.Launcher;
 import advpro_game.view.GameStage;
+import advpro_game.audio.AudioManager;
 
 public class GameCharacter extends Pane {
 
-    public enum Action { idle, run, jump, prone, shoot }
-
     private Image characterImg;
     private AnimatedSprite imageView;
+
+    // Bullet sink (GameStage wires this to add bullets safely on FX thread)
+    private Consumer<Bullet> bulletSink;
+    public void setBulletSink(Consumer<Bullet> sink) { this.bulletSink = sink; }
 
     // -------- Logical state (source of truth) --------
     private int x, y, startX, startY;
     private final int characterWidth, characterHeight;
     private int score = 0;
-    private int lives = 3;                // default 3 lives
-
+    private int lives = 30;
     private final KeyCode leftKey, rightKey, upKey, downKey;
-    private final MouseButton leftButton;
 
     // Per-frame discrete kinematics
     private int xVelocity = 0, yVelocity = 0;
     private int xAcceleration = 1, yAcceleration = 1;
-    private int xMaxVelocity = 8, yMaxVelocity = 24;
+    private int xMaxVelocity = 3, yMaxVelocity = 21;
 
     private boolean isMoveLeft = false, isMoveRight = false;
     private boolean isFalling = true;
     private boolean canJump = false, isJumping = false;
-    private boolean isProne = false;      // track prone state
+    private boolean isProne = false;
 
     // Double-tap down drop-through
     private int dropTapWindowMs = 250;
@@ -48,19 +51,39 @@ public class GameCharacter extends Pane {
     private long lastShotMs = 0L;
     private int shotCooldownMs = 120;
     private int shootPoseHoldMs = 260;
-    private PauseTransition shootRestorePT;
+    private PauseTransition shootRestorePT; // stand/run/jump shoot pose hold
+    private PauseTransition runShootHoldPT; // hold for run+shoot strip
 
     // Recoil
     private int recoilMinPx = 1, recoilMaxPx = 3;
     private int recoilReturnMs = 70;
 
-    // Collider box (relative to sprite)
-    private static final int COL_W = 30;
-    private static final int COL_H = 60;
-    private static final int COL_OFF_Y = 30;
-    private int colOffX() { return (getScaleX() > 0 ? 43 : 65 + 8 - COL_W); }
-    private int colliderBottomY() { return y + COL_OFF_Y + COL_H; }
-    private int spriteYForColliderBottom(int bottomY) { return bottomY - (COL_OFF_Y + COL_H); }
+    // ---------- Collider: standing vs prone (bottom-aligned) ----------
+    private static final int STAND_COL_W     = 25;
+    private static final int STAND_COL_H     = 60;
+    private static final int STAND_COL_OFF_Y = 30; // 30 + 60 = 90
+
+    private static final int PRONE_COL_W     = 25;
+    private static final int PRONE_COL_H     = 35;
+    private static final int PRONE_COL_OFF_Y = 55; // 55 + 35 = 90 (same bottom)
+
+    // Previous-frame snapshot (for stable platform crossing tests)
+    public int prevX, prevY;
+    private int prevColOffY = STAND_COL_OFF_Y;
+    private int prevColH    = STAND_COL_H;
+
+    private int currentColW()    { return isProne ? PRONE_COL_W     : STAND_COL_W; }
+    private int currentColH()    { return isProne ? PRONE_COL_H     : STAND_COL_H; }
+    private int currentColOffY() { return isProne ? PRONE_COL_OFF_Y : STAND_COL_OFF_Y; }
+
+    // X offset depends on facing AND collider width
+    private int colOffX() {
+        int w = currentColW();
+        return (getScaleX() > 0 ? 43 : 65 + 8 - w);
+    }
+
+    private int colliderBottomY() { return y + currentColOffY() + currentColH(); }
+    private int spriteYForColliderBottom(int bottomY) { return bottomY - (currentColOffY() + currentColH()); }
 
     // Shoot animation spec
     private static final int SPRITE_SHEET_COLS = 16;
@@ -72,13 +95,9 @@ public class GameCharacter extends Pane {
     // Muzzle offsets (X is per-facing; Y is computed from character height)
     private int muzzleRightX = 62;
     private int muzzleLeftX  = 3;
-    // standing ~45% height, prone ~65% height (lower)
-    private double standingMuzzleYFactor = 0.45;
-    private double proneMuzzleYFactor    = 0.65;
-
-    // Debug previous position
-    public int prevX, prevY;
-    public void beginFrame() { prevX = x; prevY = y; }
+    // standing ~77% height, prone ~97% height (lower)
+    private double standingMuzzleYFactor = 0.77;
+    private double proneMuzzleYFactor    = 0.99;
 
     // -------- Tunables --------
     public void setShootPoseHoldMs(int ms) { shootPoseHoldMs = Math.max(60, ms); }
@@ -86,7 +105,6 @@ public class GameCharacter extends Pane {
         recoilMinPx = Math.max(0, minPx);
         recoilMaxPx = Math.max(recoilMinPx, maxPx);
     }
-    /** Set spawn X offsets and Y factors (0..1 from top). */
     public void setMuzzleParams(int rightX, int leftX, double standingYFactor, double proneYFactor) {
         muzzleRightX = rightX; muzzleLeftX = leftX;
         standingMuzzleYFactor = standingYFactor; proneMuzzleYFactor = proneYFactor;
@@ -104,11 +122,10 @@ public class GameCharacter extends Pane {
     // -------------------- Constructor --------------------
     public GameCharacter(int id, int x, int y, String imgName,
                          int count, int column, int row, int width, int height,
-                         KeyCode leftKey, KeyCode rightKey, KeyCode upKey, KeyCode downKey, MouseButton mouseButton1) {
+                         KeyCode leftKey, KeyCode rightKey, KeyCode upKey, KeyCode downKey, MouseButton primary) {
         this.startX = x; this.startY = y; this.x = x; this.y = y;
         this.characterWidth = width; this.characterHeight = height;
         this.leftKey = leftKey; this.rightKey = rightKey; this.upKey = upKey; this.downKey = downKey;
-        this.leftButton = mouseButton1;
 
         this.characterImg = new Image(Launcher.class.getResourceAsStream(imgName));
         this.imageView = new AnimatedSprite(characterImg, count, column, row, 0, 0, width, height);
@@ -121,11 +138,19 @@ public class GameCharacter extends Pane {
         });
 
         int frameW = width, frameH = height;
-        imageView.define(AnimatedSprite.Action.run,   new AnimatedSprite.ActionSpec(0,  0, 12, SPRITE_SHEET_COLS, frameW, frameH, 80));
-        imageView.define(AnimatedSprite.Action.jump,  new AnimatedSprite.ActionSpec(12, 1,  4, SPRITE_SHEET_COLS, frameW, frameH,100));
-        imageView.define(AnimatedSprite.Action.prone, new AnimatedSprite.ActionSpec(14, 0,  2, SPRITE_SHEET_COLS, frameW, frameH,120));
-        imageView.define(AnimatedSprite.Action.idle,  new AnimatedSprite.ActionSpec(0,  0,  1, SPRITE_SHEET_COLS, frameW, frameH,500));
-        imageView.define(AnimatedSprite.Action.shoot, new AnimatedSprite.ActionSpec(SHOOT_START_INDEX, SHOOT_ROW, SHOOT_FRAMES, SPRITE_SHEET_COLS, frameW, frameH, SHOOT_FRAME_MS));
+        imageView.define(AnimatedSprite.Action.run,        new AnimatedSprite.ActionSpec(0,  0,  6, SPRITE_SHEET_COLS, frameW, frameH, 80));
+        // Use 'proneShoot' action for RUN+SHOOT strip (row 0, cols 6–11)
+        imageView.define(AnimatedSprite.Action.proneShoot, new AnimatedSprite.ActionSpec(6,  0,  6, SPRITE_SHEET_COLS, frameW, frameH, 100));
+        imageView.define(AnimatedSprite.Action.jump,       new AnimatedSprite.ActionSpec(12, 1,  4, SPRITE_SHEET_COLS, frameW, frameH,100));
+        imageView.define(AnimatedSprite.Action.prone,      new AnimatedSprite.ActionSpec(14, 0,  2, SPRITE_SHEET_COLS, frameW, frameH,120));
+        imageView.define(AnimatedSprite.Action.idle,       new AnimatedSprite.ActionSpec(0,  0,  1, SPRITE_SHEET_COLS, frameW, frameH,500));
+        imageView.define(AnimatedSprite.Action.shoot,      new AnimatedSprite.ActionSpec(SHOOT_START_INDEX, SHOOT_ROW, SHOOT_FRAMES, SPRITE_SHEET_COLS, frameW, frameH, SHOOT_FRAME_MS));
+        // ---- ShootUp & ShootDown (single-frame poses) ----
+        imageView.define(AnimatedSprite.Action.shootUp,    new AnimatedSprite.ActionSpec(5,  1, 1, SPRITE_SHEET_COLS, frameW, frameH, 80));
+        imageView.define(AnimatedSprite.Action.shootDown,  new AnimatedSprite.ActionSpec(11, 1, 1, SPRITE_SHEET_COLS, frameW, frameH, 80));
+        // ---- Run+Shoot Up/Down strips (row 1) ----
+        imageView.define(AnimatedSprite.Action.runShootDown, new AnimatedSprite.ActionSpec(7,  1, 6, SPRITE_SHEET_COLS, frameW, frameH, 100));
+        imageView.define(AnimatedSprite.Action.runShootUp,   new AnimatedSprite.ActionSpec(0,  1, 6, SPRITE_SHEET_COLS, frameW, frameH, 100));
 
         runFx(() -> {
             imageView.setAction(AnimatedSprite.Action.idle);
@@ -140,8 +165,15 @@ public class GameCharacter extends Pane {
     public void stop()      { isMoveLeft = false; isMoveRight = false; if (!isJumping && !isFalling) { isProne = false; setGroundAnim(AnimatedSprite.Action.idle); } }
     public void prone()     { isJumping = false; isMoveRight = false; isMoveLeft = false; isProne = true; setGroundAnim(AnimatedSprite.Action.prone); }
 
+    private AnimatedSprite.Action currentGroundAction = null;
     private void setGroundAnim(AnimatedSprite.Action a) {
-        if (isInShootPose()) return;
+        if (isInShootPose() || isRunShootActive()) return;
+
+        // lock to prone when S is held
+        if (isProne && a != AnimatedSprite.Action.prone) return;
+
+        if (currentGroundAction == a) return;
+        currentGroundAction = a;
         runFx(() -> imageView.setAction(a));
     }
 
@@ -152,8 +184,8 @@ public class GameCharacter extends Pane {
         clampToWalls();
     }
     private void stepVertical() {
-        if (isFalling)   { yVelocity = Math.min(yMaxVelocity, yVelocity + yAcceleration); y += yVelocity; }
-        else if (isJumping) { yVelocity = Math.max(0, yVelocity - yAcceleration); y -= yVelocity; }
+        if (isFalling)       { yVelocity = Math.min(yMaxVelocity, yVelocity + yAcceleration); y += yVelocity; }
+        else if (isJumping)  { yVelocity = Math.max(0, yVelocity - yAcceleration); y -= yVelocity; }
     }
     private void clampToWalls() {
         if (x < 0) x = 0;
@@ -161,18 +193,40 @@ public class GameCharacter extends Pane {
         if (x > maxX) x = maxX;
     }
 
+
     public void jump() {
         if (canJump) {
-            yVelocity = yMaxVelocity; canJump = false; isJumping = true; isFalling = false; isProne = false;
+            canJump = false;
+            isJumping = true;
+            isFalling = false;
+            isProne = false;
+
+            // vertical boost
+            yVelocity = yMaxVelocity;
+
+            // add a small horizontal boost if walking
+            if (isMoveLeft) {
+                xVelocity = Math.min(xMaxVelocity, xVelocity + xAcceleration);
+                x -= (int) (xVelocity * 0.8);
+            } else if (isMoveRight) {
+                xVelocity = Math.min(xMaxVelocity, xVelocity + xAcceleration);
+                x += (int) (xVelocity * 0.8);
+            }
+
+            clampToWalls();
+
             runFx(() -> imageView.setAction(AnimatedSprite.Action.jump));
+            currentGroundAction = AnimatedSprite.Action.jump;
         }
     }
+
     public void jumpForward(int direction) {
         if (canJump) {
             yVelocity = yMaxVelocity; xVelocity = xMaxVelocity; canJump = false; isJumping = true; isFalling = false; isProne = false;
             x += (int) (direction * xVelocity * 1.2);
             clampToWalls();
             runFx(() -> { setScaleX(direction); imageView.setAction(AnimatedSprite.Action.jump); });
+            currentGroundAction = AnimatedSprite.Action.jump;
         }
     }
 
@@ -200,11 +254,21 @@ public class GameCharacter extends Pane {
     private boolean isInShootPose() {
         return shootRestorePT != null && shootRestorePT.getStatus() == Animation.Status.RUNNING;
     }
+    private boolean isRunShootActive() {
+        return runShootHoldPT != null && runShootHoldPT.getStatus() == Animation.Status.RUNNING;
+    }
+
     private void setGroundAnimIfAllowed() {
-        if (isInShootPose()) return;
-        runFx(() -> imageView.setAction(
-                isProne ? AnimatedSprite.Action.prone :
-                        (isMoveLeft || isMoveRight) ? AnimatedSprite.Action.run : AnimatedSprite.Action.idle));
+        if (isInShootPose() || isRunShootActive()) return;
+
+        // if still prone (S held), never override
+        if (isProne) {
+            setGroundAnim(AnimatedSprite.Action.prone);
+            return;
+        }
+
+        if (isMoveLeft || isMoveRight) setGroundAnim(AnimatedSprite.Action.run);
+        else                           setGroundAnim(AnimatedSprite.Action.idle);
     }
     private void onLandedAtTop(int topY) {
         y = spriteYForColliderBottom(topY);
@@ -213,6 +277,12 @@ public class GameCharacter extends Pane {
     }
 
     // ---------------- Animation/Frame hook ----------------
+    public void beginFrame() {
+        prevX = x;
+        prevY = y;
+        prevColOffY = currentColOffY();
+        prevColH    = currentColH();
+    }
     public void repaint(double dtMs) {
         stepHorizontal();
         stepVertical();
@@ -232,7 +302,7 @@ public class GameCharacter extends Pane {
         boolean stood = false;
 
         Rectangle2D playerNow = this.getHitbox();
-        final int prevBottom = prevY + COL_OFF_Y + COL_H;
+        final int prevBottom = prevY + prevColOffY + prevColH; // last frame collider
         final int currBottom = colliderBottomY();
         final boolean movingDown = currBottom > prevBottom;
 
@@ -278,29 +348,82 @@ public class GameCharacter extends Pane {
             imageView.setAction(AnimatedSprite.Action.idle);
             setTranslateX(x); setTranslateY(y);
         });
+        currentGroundAction = AnimatedSprite.Action.idle;
     }
+
+    private static void fx(Runnable r) {
+        if (javafx.application.Platform.isFxApplicationThread()) r.run();
+        else javafx.application.Platform.runLater(r);
+    }
+
 
     // ---------------- Hitbox & Shooting ----------------
     public Rectangle2D getHitbox() {
-        return new Rectangle2D(this.x + colOffX(), this.y + COL_OFF_Y, COL_W, COL_H);
+        return new Rectangle2D(this.x + colOffX(), this.y + currentColOffY(), currentColW(), currentColH());
     }
 
-    private void playShootPoseAndRecoil(int facingDir) {
-        runFx(() -> imageView.setAction(AnimatedSprite.Action.shoot));
+    // Respect the chosen shoot action (no overriding); keep recoil & holds
+    private void playShootPoseAndRecoil(int facingDir, AnimatedSprite.Action shootAction) {
+        fx(() -> imageView.setAction(shootAction));
 
-        int recoil = recoilMinPx + (int)(Math.random() * (recoilMaxPx - recoilMinPx + 1));
-        x -= facingDir * recoil;
-        clampToWalls();
+        boolean isRunStrip = shootAction == AnimatedSprite.Action.proneShoot
+                || shootAction == AnimatedSprite.Action.runShootUp
+                || shootAction == AnimatedSprite.Action.runShootDown;
 
-        PauseTransition back = new PauseTransition(Duration.millis(recoilReturnMs));
-        back.setOnFinished(ev -> { x += facingDir * recoil; clampToWalls(); });
-        back.play();
+        if (isRunStrip) {
+            fx(() -> {
+                if (runShootHoldPT == null) runShootHoldPT = new PauseTransition();
+                runShootHoldPT.stop();
+                runShootHoldPT.setDuration(Duration.millis(Math.max(shotCooldownMs + 40, 160)));
+                runShootHoldPT.setOnFinished(ev -> setGroundAnimIfAllowed());
+                runShootHoldPT.playFromStart();
+            });
+        } else {
+            fx(() -> {
+                int hold = Math.max(shootPoseHoldMs, shotCooldownMs + 40);
+                if (shootRestorePT != null) shootRestorePT.stop();
+                shootRestorePT = new PauseTransition(Duration.millis(hold));
+                shootRestorePT.setOnFinished(ev -> setGroundAnimIfAllowed());
+                shootRestorePT.playFromStart();
+            });
+        }
 
-        int hold = Math.max(shootPoseHoldMs, shotCooldownMs + 40);
-        if (shootRestorePT != null) shootRestorePT.stop();
-        shootRestorePT = new PauseTransition(Duration.millis(hold));
-        shootRestorePT.setOnFinished(ev -> setGroundAnimIfAllowed());
-        shootRestorePT.playFromStart();
+        fx(() -> AudioManager.playSFX("/advpro_game/assets/sfx_shoot.mp3"));
+
+        final int recoil = (isProne ? (int)Math.round((recoilMinPx + (int)(Math.random()*(recoilMaxPx-recoilMinPx+1))) * 0.4)
+                : recoilMinPx + (int)(Math.random()*(recoilMaxPx-recoilMinPx+1)));
+        fx(() -> {
+            x -= facingDir * recoil;
+            clampToWalls();
+            PauseTransition back = new PauseTransition(Duration.millis(recoilReturnMs));
+            back.setOnFinished(ev -> { x += facingDir * recoil; clampToWalls(); });
+            back.play();
+        });
+    }
+
+
+    private AnimatedSprite.Action chooseShootAnim(Double aimDegOpt) {
+        // PRONE: lock to prone pose (horizontal)
+        if (isProne) return AnimatedSprite.Action.prone;
+
+        final boolean onGround = !isJumping && !isFalling;
+        final boolean running  = onGround && (isMoveLeft || isMoveRight);
+
+        boolean upAim = false, downAim = false;
+        if (aimDegOpt != null) {
+            upAim   = (aimDegOpt <= -20); // -45
+            downAim = (aimDegOpt >=  20); // +45
+        }
+
+        if (running) {
+            if (upAim)   return AnimatedSprite.Action.runShootUp;
+            if (downAim) return AnimatedSprite.Action.runShootDown;
+            return AnimatedSprite.Action.proneShoot; // horizontal running strip (row0 col6–11)
+        } else {
+            if (upAim)   return AnimatedSprite.Action.shootUp;
+            if (downAim) return AnimatedSprite.Action.shootDown;
+            return AnimatedSprite.Action.shoot;      // standing/jump single-frame
+        }
     }
 
     private double currentMuzzleY() {
@@ -312,13 +435,92 @@ public class GameCharacter extends Pane {
         return this.x + (dir > 0 ? muzzleRightX : muzzleLeftX);
     }
 
-    /** Fire immediately (used by SPACE or mouse) */
+    /** Fire immediately (used by legacy triggers) */
     public Bullet shoot(){
-        int dir = (getScaleX() > 0 ? 1 : -1);
+        int facing = getFacingDir();
         double mx = currentMuzzleX();
-        double my = currentMuzzleY();  // middle-ish; lower when prone
-        playShootPoseAndRecoil(dir);
-        return new Bullet(mx, my, dir);
+        double my = currentMuzzleY();
+
+        AnimatedSprite.Action anim = chooseShootAnim(null);
+        playShootPoseAndRecoil(facing, anim);
+
+        // Horizontal bullet (legacy)
+        Bullet b = new Bullet(mx, my, facing, 0, 480.0, 1, 1.6, false);
+        if (bulletSink != null) bulletSink.accept(b);
+        return b;
+    }
+
+    // Creates a bullet if trigger pressed & cooldown ok. (keyboard or mouse; angle optional)
+    public Bullet tryCreateBullet(Keys keys) {
+        // trigger (hold to shoot with mouse buttons or SPACE)
+        boolean trigger =
+                keys.isClicked(MouseButton.PRIMARY) ||
+                        keys.isClicked(MouseButton.SECONDARY) ||
+                        keys.isPressed(KeyCode.SPACE);
+        if (!trigger) return null;
+
+        long now = System.currentTimeMillis();
+        if (now - lastShotMs < shotCooldownMs) return null;
+
+        Shot s = computeShot(keys);      // fallback 8-way keyboard aim
+        lastShotMs = now;
+
+        int facing = getFacingDir();
+        AnimatedSprite.Action anim = chooseShootAnim(null);
+        playShootPoseAndRecoil(facing, anim);
+
+        Bullet bullet = new Bullet(s.x, s.y, s.dx, s.dy, 480.0, 1, 1.6, false);
+        if (bulletSink != null) bulletSink.accept(bullet);
+        return bullet;
+    }
+
+    // Angle-aware version used by GameLoop. aimDeg is snapped to {-45, 0, +45}.
+    public Bullet tryCreateBullet(Keys keys, Double aimDegOpt) {
+        // trigger (hold to shoot with mouse buttons or SPACE)
+        boolean trigger =
+                keys.isClicked(MouseButton.PRIMARY) ||
+                        keys.isClicked(MouseButton.SECONDARY) ||
+                        keys.isPressed(KeyCode.SPACE);
+        if (!trigger) return null;
+
+        long now = System.currentTimeMillis();
+        if (now - lastShotMs < shotCooldownMs) return null;
+
+        double mx = currentMuzzleX();
+        double my = currentMuzzleY();
+        double dirX, dirY;
+
+        if (aimDegOpt != null) {
+            // Use snapped mouse angle, mirrored by facing; screen Y+ is down, so sin(rad) is correct
+            int facing = getFacingDir(); // +1 right, -1 left
+            double rad = Math.toRadians(aimDegOpt);
+            dirX = Math.cos(rad) * facing;
+            dirY = Math.sin(rad);
+            double len = Math.hypot(dirX, dirY);
+            if (len == 0) { dirX = facing; dirY = 0; } else { dirX /= len; dirY /= len; }
+        } else {
+            // Fallback to keyboard 8-way aim
+            Shot s = computeShot(keys);
+            mx = s.x; my = s.y; dirX = s.dx; dirY = s.dy;
+        }
+
+        lastShotMs = now;
+
+        // PRONE lock: force horizontal only
+        if (isProne) { dirY = 0; dirX = (getFacingDir() > 0 ? 1 : -1); }
+
+        int facing = getFacingDir();
+        AnimatedSprite.Action anim = chooseShootAnim(aimDegOpt);
+        playShootPoseAndRecoil(facing, anim);
+
+        Bullet bullet = new Bullet(mx, my, dirX, dirY, 480.0, 1, 1.6, false);
+        if (bulletSink != null) bulletSink.accept(bullet);
+        return bullet;
+    }
+
+    // Keep a primitive overload for existing call sites; delegate to the main version.
+    public Bullet tryCreateBullet(Keys keys, double aimDeg) {
+        return tryCreateBullet(keys, Double.valueOf(aimDeg));
     }
 
     // -------- scoring & lives --------
@@ -342,7 +544,6 @@ public class GameCharacter extends Pane {
     public KeyCode getRightKey() { return rightKey; }
     public KeyCode getUpKey() { return upKey; }
     public KeyCode getDownKey() { return downKey; }
-    public MouseButton getLeftButton() { return leftButton; }
     public AnimatedSprite getImageView() { return imageView; }
     public int getyMaxVelocity() { return yMaxVelocity; }
     public void setyMaxVelocity(int yMaxVelocity) { this.yMaxVelocity = yMaxVelocity; }
@@ -357,22 +558,22 @@ public class GameCharacter extends Pane {
     public int getxAcceleration() { return xAcceleration; }
     public void setxAcceleration(int xAcceleration) { this.xAcceleration = xAcceleration; }
 
-    // === 8-way aim computation (used by tryCreateBullet) ===
+    // === 8-way aim computation (used by tryCreateBullet fallback) ===
     public static class Shot {
         public final double x, y, dx, dy;
         public Shot(double x, double y, double dx, double dy) { this.x=x; this.y=y; this.dx=dx; this.dy=dy; }
     }
-    public Shot computeShot(advpro_game.model.Keys keys) {
+    public Shot computeShot(Keys keys) {
         boolean up = keys.isPressed(getUpKey());
         boolean left = keys.isPressed(getLeftKey());
         boolean right = keys.isPressed(getRightKey());
         boolean down = keys.isPressed(getDownKey());
 
         // When PRONE (or down-without-move), force horizontal shot at lower muzzle
-        boolean proneShoot = isProne || (down && !left && !right);
+        boolean proneShootLogic = isProne || (down && !left && !right);
 
         double dx = 0, dy = 0;
-        if (proneShoot) {
+        if (proneShootLogic) {
             dx = (getScaleX() < 0) ? -1 : 1;
             dy = 0;
         } else if (up && (left || right)) { dy = -1; dx = right ? 1 : -1; }
@@ -386,22 +587,34 @@ public class GameCharacter extends Pane {
         return new Shot(muzzleX, muzzleY, dx, dy);
     }
 
-    /** Creates a bullet if trigger pressed & cooldown ok. */
-    public Bullet tryCreateBullet(advpro_game.model.Keys keys) {
-        boolean mouseShoot = keys.isClicked(javafx.scene.input.MouseButton.SECONDARY)
-                || keys.isClicked(javafx.scene.input.MouseButton.PRIMARY);
-        boolean keyShoot   = keys.isPressed(javafx.scene.input.KeyCode.SPACE);
-        if (!mouseShoot && !keyShoot) return null;
+    //-----------helper------------
+    public int getFacingDir() { return getScaleX() >= 0 ? 1 : -1; }
 
-        long now = System.currentTimeMillis();
-        if (now - lastShotMs < shotCooldownMs) return null;
+    // Selects the proper shoot animation for a snapped angle (-45/0/+45),
+    // honoring the "prone = horizontal only" rule.
+    private void setShootAnimForAngle(double aimDeg) {
+        if (isRunShootActive()) return;
 
-        Shot s = computeShot(keys);
-        lastShotMs = now;
+        if (isProne) {
+            setGroundAnim(AnimatedSprite.Action.prone);
+            return;
+        }
 
-        int facing = (getScaleX() > 0 ? 1 : -1);
-        playShootPoseAndRecoil(facing);
+        final boolean onGround = !isJumping && !isFalling;
+        final boolean running  = onGround && (isMoveLeft || isMoveRight);
+        final boolean upAim    = (aimDeg <= -20);
+        final boolean downAim  = (aimDeg >=  20);
 
-        return new Bullet(s.x, s.y, s.dx, s.dy, 480.0, 1);
+        AnimatedSprite.Action a;
+        if (running) {
+            a = upAim   ? AnimatedSprite.Action.runShootUp
+                    : downAim ? AnimatedSprite.Action.runShootDown
+                    :           AnimatedSprite.Action.proneShoot; // horizontal run+shoot strip
+        } else {
+            a = upAim   ? AnimatedSprite.Action.shootUp
+                    : downAim ? AnimatedSprite.Action.shootDown
+                    :           AnimatedSprite.Action.shoot;
+        }
+        runFx(() -> imageView.setAction(a));
     }
 }

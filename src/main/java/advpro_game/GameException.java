@@ -1,6 +1,6 @@
 package advpro_game;
 
 public class GameException extends RuntimeException {
-    public GameException(String message) { super(message); }
-    public GameException(String message, Throwable cause) { super(message, cause); }
+    public GameException(String msg) { super(msg); }
+    public GameException(String msg, Throwable cause) { super(msg, cause); }
 }

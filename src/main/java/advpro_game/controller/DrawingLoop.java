@@ -4,6 +4,9 @@ import advpro_game.model.Bullet;
 import advpro_game.model.Enemy;
 import advpro_game.model.GameCharacter;
 import advpro_game.view.GameStage;
+import javafx.application.Platform;
+
+import java.util.ArrayList;
 
 public class DrawingLoop implements Runnable {
     private final GameStage gameStage;
@@ -14,14 +17,17 @@ public class DrawingLoop implements Runnable {
     public DrawingLoop(GameStage gameStage) { this.gameStage = gameStage; }
     public void stop() { running = false; }
 
+    // ---------------- Characters ----------------
     private void stepCharacters(double dtMs) {
-        for (GameCharacter c : gameStage.getGameCharacterList()) {
+        for (GameCharacter c : new ArrayList<>(gameStage.getGameCharacterList())) {
+            if (c == null) continue;
+
             c.repaint(dtMs);
             c.checkPlatformCollision(gameStage.getPlatforms());
             c.checkReachHighest();
             c.checkReachFloor();
 
-            // hard clamp to world
+            // Clamp within world
             int x = c.getX();
             int w = c.getCharacterWidth();
             if (x < 0) c.setX(0);
@@ -29,11 +35,18 @@ public class DrawingLoop implements Runnable {
         }
     }
 
+    // ---------------- Bullets ----------------
     private void stepBullets(double dtSec) {
-        for (Bullet b : new java.util.ArrayList<>(gameStage.getBullets())) {
+        var bullets = gameStage.getBullets();
+        var enemies = gameStage.getEnemies();
+        var players = gameStage.getGameCharacterList();
+
+        // iterate over a snapshot to avoid concurrent modification
+        for (Bullet b : new ArrayList<>(bullets)) {
+            if (b == null) continue;
             b.update(dtSec);
 
-            // cull offscreen
+            // remove off-screen bullets
             if (b.getX() < -120 || b.getX() > GameStage.WIDTH + 120 ||
                     b.getY() < -120 || b.getY() > GameStage.HEIGHT + 240) {
                 gameStage.removeBullet(b);
@@ -42,15 +55,15 @@ public class DrawingLoop implements Runnable {
 
             boolean hit = false;
 
-            // Player bullets hit enemies
+            // ---------- Player bullets vs enemies ----------
             if (!b.isEnemyBullet()) {
-                for (Enemy e : gameStage.getEnemies()) {
+                for (Enemy e : new ArrayList<>(enemies)) {
+                    if (e == null) continue;
                     if (b.getHitbox().intersects(e.getHitbox())) {
                         boolean dead = e.hit(b.getDamage());
 
-                        // score (player 0)
-                        if (!gameStage.getGameCharacterList().isEmpty()) {
-                            var p = gameStage.getGameCharacterList().get(0);
+                        if (!players.isEmpty()) {
+                            var p = players.get(0);
                             p.addScore(dead ? 20 : 10);
                         }
 
@@ -61,9 +74,11 @@ public class DrawingLoop implements Runnable {
                     }
                 }
             }
-            // Enemy bullets hit player
+
+            // ---------- Enemy bullets vs players ----------
             else {
-                for (GameCharacter c : gameStage.getGameCharacterList()) {
+                for (GameCharacter c : new ArrayList<>(players)) {
+                    if (c == null) continue;
                     if (b.getHitbox().intersects(c.getHitbox())) {
                         c.loseLife();
                         gameStage.updateLivesHUD(c.getLives());
@@ -72,6 +87,8 @@ public class DrawingLoop implements Runnable {
                             c.respawn();
                         } else {
                             System.out.println("Game Over - Hit by enemy bullet!");
+                            // optionally trigger GameOver overlay:
+                            Platform.runLater(gameStage::showGameOverOverlay);
                         }
 
                         gameStage.showHitFlash(b.getX(), b.getY());
@@ -86,8 +103,9 @@ public class DrawingLoop implements Runnable {
         }
     }
 
+    // ---------------- Debug Overlay ----------------
     private void paintDebug() {
-        javafx.application.Platform.runLater(() -> {
+        Platform.runLater(() -> {
             var gc = gameStage.getDebugGC();
             gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);
 
@@ -98,7 +116,8 @@ public class DrawingLoop implements Runnable {
                         : javafx.scene.paint.Color.CYAN);
                 gc.strokeRect(r.getMinX(), r.getMinY(), r.getWidth(), r.getHeight());
             }
-            // character hitboxes
+
+            // characters
             gc.setStroke(javafx.scene.paint.Color.LIME);
             for (var c : gameStage.getGameCharacterList()) {
                 var hb = c.getHitbox();
@@ -107,6 +126,7 @@ public class DrawingLoop implements Runnable {
         });
     }
 
+    // ---------------- Loop ----------------
     @Override
     public void run() {
         long last = System.nanoTime();
@@ -116,13 +136,17 @@ public class DrawingLoop implements Runnable {
             double dtSec = dtMs / 1000.0;
             last = now;
 
+            // draw/update safely
             stepCharacters(dtMs);
             stepBullets(dtSec);
             paintDebug();
 
-            long frameTime = (System.nanoTime() - now)/1_000_000L;
-            long sleepMs = Math.max(1, (long)interval - frameTime);
-            try { Thread.sleep(sleepMs); } catch (InterruptedException ignored) {}
+            // regulate frame rate
+            long frameTime = (System.nanoTime() - now) / 1_000_000L;
+            long sleepMs = Math.max(1, (long) interval - frameTime);
+            try {
+                Thread.sleep(sleepMs);
+            } catch (InterruptedException ignored) {}
         }
     }
 }
