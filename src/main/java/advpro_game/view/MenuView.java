@@ -63,7 +63,7 @@ public class MenuView extends StackPane {
         vignette.setEffect(new javafx.scene.effect.InnerShadow(80, Color.color(0,0,0,0.85)));
 
         // --- Title ---
-        Label title = new Label("CONTRA • CLONE");
+        Label title = new Label("CONTRE • TWO • ONE");
         title.setTextFill(Color.web("#f5f5f7"));
         title.setFont(Font.font("Consolas", FontWeight.EXTRA_BOLD, 40));
         title.setStyle(
