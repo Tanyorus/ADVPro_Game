@@ -27,7 +27,7 @@ public class GameCharacter extends Pane {
     private int x, y, startX, startY;
     private final int characterWidth, characterHeight;
     private int score = 0;
-    private int lives = 3;
+    private int lives = 50;
     private final KeyCode leftKey, rightKey, upKey, downKey;
 
     // Per-frame discrete kinematics
@@ -50,6 +50,9 @@ public class GameCharacter extends Pane {
     // Shooting & pose
     private long lastShotMs = 0L;
     private int shotCooldownMs = 120;
+    private long lastLaserMs = 0L;
+    private int laserCooldownMs = 1200;
+    private int laserDamage = 4;
     private int shootPoseHoldMs = 260;
     private PauseTransition shootRestorePT; // stand/run/jump shoot pose hold
     private PauseTransition runShootHoldPT; // hold for run+shoot strip
@@ -113,6 +116,10 @@ public class GameCharacter extends Pane {
         dropTapWindowMs = Math.max(80, doubleTapWindowMs);
         dropIgnoreMs = Math.max(120, ignoreMs);
     }
+
+    public void setLaserCooldownMs(int ms) { laserCooldownMs = Math.max(200, ms); }
+    public void setLaserDamage(int damage) { laserDamage = Math.max(1, damage); }
+    public int getLaserDamage() { return laserDamage; }
 
     private static void runFx(Runnable r) {
         if (javafx.application.Platform.isFxApplicationThread()) r.run();
@@ -476,10 +483,10 @@ public class GameCharacter extends Pane {
 
     // Angle-aware version used by GameLoop. aimDeg is snapped to {-45, 0, +45}.
     public Bullet tryCreateBullet(Keys keys, Double aimDegOpt) {
-        // trigger (hold to shoot with mouse buttons or SPACE)
+        // trigger (hold to shoot with mouse buttons or SPACE)␊
         boolean trigger =
-                keys.isClicked(MouseButton.PRIMARY) ||
-                        keys.isClicked(MouseButton.SECONDARY) ||
+        keys.isClicked(MouseButton.PRIMARY) ||
+        keys.isClicked(MouseButton.SECONDARY) ||
                         keys.isPressed(KeyCode.SPACE);
         if (!trigger) return null;
 
@@ -516,6 +523,53 @@ public class GameCharacter extends Pane {
         Bullet bullet = new Bullet(mx, my, dirX, dirY, 480.0, 1, 1.6, false);
         if (bulletSink != null) bulletSink.accept(bullet);
         return bullet;
+    }
+
+    public Shot tryCreateLaser(Keys keys, Double aimDegOpt) {
+        if (keys == null) return null;
+
+        long now = System.currentTimeMillis();
+        if (now - lastLaserMs < laserCooldownMs) return null;
+
+        lastLaserMs = now;
+
+        double mx = currentMuzzleX();
+        double my = currentMuzzleY();
+        double dirX;
+        double dirY;
+
+        if (aimDegOpt != null) {
+            int facing = getFacingDir();
+            double rad = Math.toRadians(aimDegOpt);
+            dirX = Math.cos(rad) * facing;
+            dirY = Math.sin(rad);
+        } else {
+            Shot s = computeShot(keys);
+            mx = s.x;
+            my = s.y;
+            dirX = s.dx;
+            dirY = s.dy;
+        }
+
+        if (isProne) {
+            dirY = 0;
+            dirX = (getFacingDir() > 0 ? 1 : -1);
+        }
+
+        double len = Math.hypot(dirX, dirY);
+        int facing = getFacingDir();
+        if (len == 0) {
+            dirX = facing;
+            dirY = 0;
+        } else {
+            dirX /= len;
+            dirY /= len;
+        }
+
+        AnimatedSprite.Action anim = chooseShootAnim(aimDegOpt);
+        playShootPoseAndRecoil(facing, anim);
+
+        return new Shot(mx, my, dirX, dirY);
     }
 
     // Keep a primitive overload for existing call sites; delegate to the main version.

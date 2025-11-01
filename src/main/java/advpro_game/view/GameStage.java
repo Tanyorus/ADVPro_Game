@@ -4,8 +4,10 @@ import advpro_game.Launcher;
 import advpro_game.audio.AudioManager;
 import advpro_game.model.*;
 import advpro_game.model.Platform;
+import advpro_game.model.LaserBeamUltimate;
 
 import javafx.geometry.Pos;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.image.Image;
@@ -135,6 +137,11 @@ public class GameStage extends Pane {
     private final List<Bullet> bullets     = new ArrayList<>();
     private final List<Enemy> enemies      = new ArrayList<>();
 
+    private static final double LASER_RANGE_PIXELS      = WIDTH + 200.0;
+    private static final double LASER_HALF_THICKNESS_PX = 30.0;
+    private static final int    LASER_SCORE_HIT         = 25;
+    private static final int    LASER_SCORE_KILL        = 50;
+
     // ---- Input state ----
     private final Keys keys = new Keys();
     private MouseButton mouseButton; // kept for API compatibility (not used directly)
@@ -172,6 +179,7 @@ public class GameStage extends Pane {
     private boolean winCheckEnabled   = true;  // disarm while resetting
     private boolean victoryShown      = false; // for shouldShowVictory()
     private boolean hadEnemiesThisStage = false;
+    private boolean gameOverOverlayShown = false;
 
     // ---- Callbacks for launcher wiring ----
     private Runnable onRetry = () -> {};
@@ -687,6 +695,59 @@ public class GameStage extends Pane {
         bullets.remove(b);
     }
 
+    public void fireLaser(GameCharacter shooter, GameCharacter.Shot shot) {
+        if (shooter == null || shot == null) return;
+
+        double dirX = shot.dx;
+        double dirY = shot.dy;
+        double len = Math.hypot(dirX, dirY);
+        if (len == 0) {
+            int facing = shooter.getFacingDir();
+            dirX = facing;
+            dirY = 0;
+            len = 1;
+        } else {
+            dirX /= len;
+            dirY /= len;
+        }
+
+        double startX = shot.x;
+        double startY = shot.y;
+        double endX = startX + dirX * LASER_RANGE_PIXELS;
+        double endY = startY + dirY * LASER_RANGE_PIXELS;
+
+        int facing = dirX >= 0 ? 1 : -1;
+        double beamScale = Math.max(1.0, WIDTH / 360.0);
+        LaserBeamUltimate beam = new LaserBeamUltimate(startX, startY, facing, beamScale);
+        runOrDefer(() -> beam.playOnce(bulletLayer));
+
+        AudioManager.playSFX("/advpro_game/assets/sfx_shoot.mp3");
+
+        int damage = shooter.getLaserDamage();
+        for (Enemy enemy : new ArrayList<>(enemies)) {
+            if (enemy == null) continue;
+            Rectangle2D hitbox;
+            try { hitbox = enemy.getHitbox(); }
+            catch (Throwable ignored) { continue; }
+            if (hitbox == null) continue;
+
+            if (!intersectsBeam(hitbox, startX, startY, endX, endY, LASER_HALF_THICKNESS_PX)) continue;
+
+            boolean dead = false;
+            try { dead = enemy.hit(damage); }
+            catch (Throwable ignored) {}
+
+            try { shooter.addScore(dead ? LASER_SCORE_KILL : LASER_SCORE_HIT); }
+            catch (Throwable ignored) {}
+
+            double[] impact = closestPointOnSegment(
+                    hitbox.getMinX() + hitbox.getWidth() * 0.5,
+                    hitbox.getMinY() + hitbox.getHeight() * 0.5,
+                    startX, startY, endX, endY);
+            if (impact != null) showHitFlash(impact[0], impact[1]);
+        }
+    }
+
     public void addEnemy(Enemy e) {
         if (e == null) return;
         if (!enemies.contains(e)) enemies.add(e);
@@ -784,26 +845,80 @@ public class GameStage extends Pane {
 
     // --------- Game Over ----------
     public void showGameOverOverlay() {
+        if (gameOverOverlayShown) return;
+        gameOverOverlayShown = true;
+
         Ui.later(() -> {
-            Ui.safeClear(overlayLayer);
+            overlayLayer.getChildren().clear();
             overlayLayer.setMouseTransparent(false);
             overlayLayer.setPickOnBounds(true);
+
+            try { keys.clear(); } catch (Throwable ignored) {}
+            for (var c : gameCharacterList) c.setDisable(true);
+
+            interceptGameOverInputs();
+            requestFocus();
+
             var overlay = new GameOverOverlay(
-                    () -> {
-                        Ui.safeClear(overlayLayer);
-                        overlayLayer.setMouseTransparent(true);
-                        if (onRetry != null) onRetry.run();
-                    },
-                    () -> {
-                        Ui.safeClear(overlayLayer);
-                        overlayLayer.setMouseTransparent(true);
-                        if (onExitToMenu != null) onExitToMenu.run();
-                    },
+                    this::handleGameOverRetry,
+                    this::handleGameOverExit,
                     WIDTH, HEIGHT
             );
             overlayLayer.getChildren().add(overlay);
-            // no toFront(); viewOrder controls z-order
         });
+    }
+
+    private void handleGameOverRetry() {
+        Ui.later(() -> {
+            if (!gameOverOverlayShown) return;
+            gameOverOverlayShown = false;
+
+            overlayLayer.getChildren().clear();
+            overlayLayer.setMouseTransparent(true);
+            overlayLayer.setPickOnBounds(false);
+
+            clearPressedInputs();
+            restoreBaseInputHandlers();
+
+            if (onRetry != null) onRetry.run();
+        });
+    }
+
+
+    private void handleGameOverExit() {
+        Ui.later(() -> {
+            if (!gameOverOverlayShown) return;
+            gameOverOverlayShown = false;
+
+            overlayLayer.getChildren().clear();
+            overlayLayer.setMouseTransparent(true);
+            overlayLayer.setPickOnBounds(false);
+
+            clearPressedInputs();
+            restoreBaseInputHandlers();
+
+            if (onExitToMenu != null) onExitToMenu.run();
+        });
+    }
+
+    private void interceptGameOverInputs() {
+        setOnKeyPressed(e -> {
+            e.consume();
+            if (e.getCode() == KeyCode.R || e.getCode() == KeyCode.ENTER || e.getCode() == KeyCode.SPACE) {
+                handleGameOverRetry();
+            } else if (e.getCode() == KeyCode.ESCAPE) {
+                handleGameOverExit();
+            }
+        });
+        setOnKeyReleased(javafx.event.Event::consume);
+    }
+
+    private void restoreBaseInputHandlers() {
+        setOnKeyPressed(baseKeyPressed);
+        setOnKeyReleased(baseKeyReleased);
+        setOnMousePressed(baseMousePressed);
+        setOnMouseReleased(baseMouseReleased);
+        requestFocus();
     }
 
     // --------- Victory flow ----------
@@ -876,10 +991,8 @@ public class GameStage extends Pane {
             gameClearOverlay = null;
             overlayLayer.setMouseTransparent(true);
             overlayLayer.setPickOnBounds(false);
-            setOnKeyPressed(baseKeyPressed);
-            setOnKeyReleased(baseKeyReleased);
-            setOnMousePressed(baseMousePressed);
-            setOnMouseReleased(baseMouseReleased);
+            restoreBaseInputHandlers();
+
 
             // clear world
             bullets.clear();
@@ -933,10 +1046,7 @@ public class GameStage extends Pane {
             gameClearOverlay = null;
             overlayLayer.setMouseTransparent(true);
             overlayLayer.setPickOnBounds(false);
-            setOnKeyPressed(baseKeyPressed);
-            setOnKeyReleased(baseKeyReleased);
-            setOnMousePressed(baseMousePressed);
-            setOnMouseReleased(baseMouseReleased);
+            restoreBaseInputHandlers();
 
             // clear world lists & visuals
             bullets.clear();
@@ -1070,6 +1180,50 @@ public class GameStage extends Pane {
         if (angle >=  15) return  45.0;  // aim down
         return 0.0;                      // straight
     }
+
+    private static double[] closestPointOnSegment(double px, double py,
+                                                  double x1, double y1,
+                                                  double x2, double y2) {
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+        double denom = dx * dx + dy * dy;
+        if (denom == 0) return new double[]{x1, y1};
+        double t = ((px - x1) * dx + (py - y1) * dy) / denom;
+        t = Math.max(0.0, Math.min(1.0, t));
+        return new double[]{x1 + t * dx, y1 + t * dy};
+    }
+
+    private static double distancePointToSegment(double px, double py,
+                                                 double x1, double y1,
+                                                 double x2, double y2) {
+        double[] closest = closestPointOnSegment(px, py, x1, y1, x2, y2);
+        return Math.hypot(px - closest[0], py - closest[1]);
+    }
+
+    private static boolean intersectsBeam(Rectangle2D rect,
+                                          double x1, double y1,
+                                          double x2, double y2,
+                                          double radius) {
+        if (rect == null) return false;
+        double cx = rect.getMinX() + rect.getWidth() * 0.5;
+        double cy = rect.getMinY() + rect.getHeight() * 0.5;
+        double[][] samplePoints = new double[][]{
+                {cx, cy},
+                {rect.getMinX(), rect.getMinY()},
+                {rect.getMinX(), rect.getMaxY()},
+                {rect.getMaxX(), rect.getMinY()},
+                {rect.getMaxX(), rect.getMaxY()},
+                {cx, rect.getMinY()},
+                {cx, rect.getMaxY()},
+                {rect.getMinX(), cy},
+                {rect.getMaxX(), cy}
+        };
+        for (double[] point : samplePoints) {
+            if (distancePointToSegment(point[0], point[1], x1, y1, x2, y2) <= radius) return true;
+        }
+        return false;
+    }
+
 
     // --- PATCH: Robust enemy visibility checks ---
     private boolean noEnemiesVisible() {

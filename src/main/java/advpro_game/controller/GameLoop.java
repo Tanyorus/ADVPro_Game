@@ -23,7 +23,41 @@ public class GameLoop implements Runnable {
     private long invincibleUntil = 0;
 
     // Edge detection for jump
-    private boolean prevW = false, prevUp = false, prevSpace = false;
+    private boolean prevW = false, prevUp = false, prevSpace = false, prevE = false;
+
+    // 0° = right, 90° = up, 180° = left, 270° = down
+// Uses WASD / Arrow keys to form 8-way aim; if no aim keys, defaults to facing.
+    private double getSnappedAimAngleDeg(GameCharacter c) {
+        var keys = gameStage.getKeys();
+
+        boolean up    = keys.isPressed(KeyCode.W)     || keys.isPressed(KeyCode.UP);
+        boolean down  = keys.isPressed(KeyCode.S)     || keys.isPressed(KeyCode.DOWN);
+        boolean left  = keys.isPressed(c.getLeftKey());
+        boolean right = keys.isPressed(c.getRightKey());
+
+        int dx = (right ? 1 : 0) - (left ? 1 : 0);
+        int dy = (down  ? 1 : 0) - (up   ? 1 : 0);
+
+        // If no directional input, aim where the character faces
+        if (dx == 0 && dy == 0) {
+            // If your character uses scaleX sign for facing, this keeps it simple:
+            double facing = 0.0;                       // 0° = right
+            try {
+                facing = (c.getScaleX() >= 0) ? 0.0 : 180.0;
+            } catch (Throwable ignored) {}
+            return facing;
+        }
+
+        // Screen Y grows downward; negate dy so "up" is +90°.
+        double angle = Math.toDegrees(Math.atan2(-dy, dx)); // range (-180,180]
+        if (angle < 0) angle += 360.0;
+
+        // Snap to nearest 45°
+        double snapped = Math.round(angle / 45.0) * 45.0;
+        if (snapped >= 360.0) snapped -= 360.0;
+        return snapped;
+    }
+
 
     public GameLoop(GameStage gameStage) {
         this.gameStage = gameStage;
@@ -50,9 +84,11 @@ public class GameLoop implements Runnable {
                 boolean left         = gameStage.getKeys().isPressed(c.getLeftKey());
                 boolean right        = gameStage.getKeys().isPressed(c.getRightKey());
                 boolean down         = gameStage.getKeys().isPressed(c.getDownKey());
+                boolean ePressed     = gameStage.getKeys().isPressed(KeyCode.E);
 
                 boolean upEdge    = (!prevW && wPressed) || (!prevUp && upPressed);
                 boolean spaceEdge = (!prevSpace && spacePressed);
+                boolean eEdge     = (!prevE && ePressed);
 
                 if (down && !(left || right)) c.prone();
                 else if (left && !right)      c.moveLeft();
@@ -64,6 +100,12 @@ public class GameLoop implements Runnable {
 
                 if (worldReady && !c.isDisabled()) {
                     double aimDeg = gameStage.getSnappedAimAngleDeg(c);
+
+                    if (eEdge) {
+                        GameCharacter.Shot laser = c.tryCreateLaser(gameStage.getKeys(), aimDeg);
+                        if (laser != null) gameStage.fireLaser(c, laser);
+                    }
+
                     Bullet b = c.tryCreateBullet(gameStage.getKeys(), aimDeg);
                     if (b != null) gameStage.addBullet(b);
                 }
@@ -80,6 +122,7 @@ public class GameLoop implements Runnable {
         prevW     = gameStage.getKeys().isPressed(KeyCode.W)     && worldReady;
         prevUp    = gameStage.getKeys().isPressed(KeyCode.UP)    && worldReady;
         prevSpace = gameStage.getKeys().isPressed(KeyCode.SPACE) && worldReady;
+        prevE     = gameStage.getKeys().isPressed(KeyCode.E)     && worldReady;
     }
 
     // ===================== BULLETS =====================
