@@ -14,9 +14,6 @@ import advpro_game.Launcher;
 import advpro_game.view.GameStage;
 import advpro_game.audio.AudioManager;
 
-import java.util.logging.Level;
-import java.util.logging.Logger;
-
 public class GameCharacter extends Pane {
 
     private Image characterImg;
@@ -30,7 +27,7 @@ public class GameCharacter extends Pane {
     private int x, y, startX, startY;
     private final int characterWidth, characterHeight;
     private int score = 0;
-    private int lives = 30;
+    private int lives = 3;
     private final KeyCode leftKey, rightKey, upKey, downKey;
 
     // Per-frame discrete kinematics
@@ -56,12 +53,6 @@ public class GameCharacter extends Pane {
     private int shootPoseHoldMs = 260;
     private PauseTransition shootRestorePT; // stand/run/jump shoot pose hold
     private PauseTransition runShootHoldPT; // hold for run+shoot strip
-
-
-    // ===== Ultimate laser (E key) =====
-    private long lastUltTimeMs = 0;
-    private static final long ULT_COOLDOWN_MS = 600; // 0.6s (set 0 for no cooldown)
-    private static final double ULT_SCALE = 0.50;     // visual scale of the sheet
 
     // Recoil
     private int recoilMinPx = 1, recoilMaxPx = 3;
@@ -147,68 +138,42 @@ public class GameCharacter extends Pane {
         });
 
         int frameW = width, frameH = height;
-        imageView.define(AnimatedSprite.Action.run,           new AnimatedSprite.ActionSpec(0,  0,  6, SPRITE_SHEET_COLS, frameW, frameH, 80));
+        imageView.define(AnimatedSprite.Action.run,        new AnimatedSprite.ActionSpec(0,  0,  6, SPRITE_SHEET_COLS, frameW, frameH, 80));
         // Use 'proneShoot' action for RUN+SHOOT strip (row 0, cols 6–11)
-        imageView.define(AnimatedSprite.Action.proneShoot,    new AnimatedSprite.ActionSpec(6,  0,  6, SPRITE_SHEET_COLS, frameW, frameH, 100));
-        imageView.define(AnimatedSprite.Action.jump,          new AnimatedSprite.ActionSpec(12, 1,  4, SPRITE_SHEET_COLS, frameW, frameH,100));
-        imageView.define(AnimatedSprite.Action.prone,         new AnimatedSprite.ActionSpec(14, 0,  2, SPRITE_SHEET_COLS, frameW, frameH,120));
-        imageView.define(AnimatedSprite.Action.idle,          new AnimatedSprite.ActionSpec(0,  0,  1, SPRITE_SHEET_COLS, frameW, frameH,500));
-        imageView.define(AnimatedSprite.Action.shoot,         new AnimatedSprite.ActionSpec(SHOOT_START_INDEX, SHOOT_ROW, SHOOT_FRAMES, SPRITE_SHEET_COLS, frameW, frameH, SHOOT_FRAME_MS));
+        imageView.define(AnimatedSprite.Action.proneShoot, new AnimatedSprite.ActionSpec(6,  0,  6, SPRITE_SHEET_COLS, frameW, frameH, 100));
+        imageView.define(AnimatedSprite.Action.jump,       new AnimatedSprite.ActionSpec(12, 1,  4, SPRITE_SHEET_COLS, frameW, frameH,100));
+        imageView.define(AnimatedSprite.Action.prone,      new AnimatedSprite.ActionSpec(14, 0,  2, SPRITE_SHEET_COLS, frameW, frameH,120));
+        imageView.define(AnimatedSprite.Action.idle,       new AnimatedSprite.ActionSpec(0,  0,  1, SPRITE_SHEET_COLS, frameW, frameH,500));
+        imageView.define(AnimatedSprite.Action.shoot,      new AnimatedSprite.ActionSpec(SHOOT_START_INDEX, SHOOT_ROW, SHOOT_FRAMES, SPRITE_SHEET_COLS, frameW, frameH, SHOOT_FRAME_MS));
         // ---- ShootUp & ShootDown (single-frame poses) ----
-        imageView.define(AnimatedSprite.Action.shootUp,       new AnimatedSprite.ActionSpec(5,  1, 1, SPRITE_SHEET_COLS, frameW, frameH, 80));
-        imageView.define(AnimatedSprite.Action.shootDown,     new AnimatedSprite.ActionSpec(11, 1, 1, SPRITE_SHEET_COLS, frameW, frameH, 80));
+        imageView.define(AnimatedSprite.Action.shootUp,    new AnimatedSprite.ActionSpec(5,  1, 1, SPRITE_SHEET_COLS, frameW, frameH, 80));
+        imageView.define(AnimatedSprite.Action.shootDown,  new AnimatedSprite.ActionSpec(11, 1, 1, SPRITE_SHEET_COLS, frameW, frameH, 80));
         // ---- Run+Shoot Up/Down strips (row 1) ----
-        imageView.define(AnimatedSprite.Action.runShootDown,  new AnimatedSprite.ActionSpec(7,  1, 6, SPRITE_SHEET_COLS, frameW, frameH, 100));
-        imageView.define(AnimatedSprite.Action.runShootUp,    new AnimatedSprite.ActionSpec(0,  1, 6, SPRITE_SHEET_COLS, frameW, frameH, 100));
+        imageView.define(AnimatedSprite.Action.runShootDown, new AnimatedSprite.ActionSpec(7,  1, 6, SPRITE_SHEET_COLS, frameW, frameH, 100));
+        imageView.define(AnimatedSprite.Action.runShootUp,   new AnimatedSprite.ActionSpec(0,  1, 6, SPRITE_SHEET_COLS, frameW, frameH, 100));
 
         runFx(() -> {
             imageView.setAction(AnimatedSprite.Action.idle);
             setTranslateX(this.x);
             setTranslateY(this.y);
         });
-        currentGroundAction = AnimatedSprite.Action.idle;
-        setActionLogged(currentGroundAction, "spawn");
     }
 
     // ---------------- Movement & State ----------------
-    public void moveLeft()  {
-        runFx(() -> setScaleX(-1));
-        boolean wasProne = isProne;
-        isMoveLeft = true;  isMoveRight = false; isProne = false;
-        if (wasProne) onProneLogged(false);
-        setGroundAnim(AnimatedSprite.Action.run, "moveLeft");
-    }
-    public void moveRight() {
-        runFx(() -> setScaleX(1));
-        boolean wasProne = isProne;
-        isMoveLeft = false; isMoveRight = true;  isProne = false;
-        if (wasProne) onProneLogged(false);
-        setGroundAnim(AnimatedSprite.Action.run, "moveRight");
-    }
-    public void stop()      {
-        boolean wasProne = isProne;
-        isMoveLeft = false; isMoveRight = false;
-        if (!isJumping && !isFalling) {
-            isProne = false;
-            if (wasProne) onProneLogged(false);
-            setGroundAnim(AnimatedSprite.Action.idle, "stop");
-        }
-    }
-    public void prone()     {
-        if (isJumping || isFalling) return;
-        if (!isProne) onProneLogged(true);
-        isJumping = false; isMoveRight = false; isMoveLeft = false; isProne = true;
-        setGroundAnim(AnimatedSprite.Action.prone, "prone");
-    }
+    public void moveLeft()  { runFx(() -> setScaleX(-1)); isMoveLeft = true;  isMoveRight = false; isProne = false; setGroundAnim(AnimatedSprite.Action.run); }
+    public void moveRight() { runFx(() -> setScaleX(1));  isMoveLeft = false; isMoveRight = true;  isProne = false; setGroundAnim(AnimatedSprite.Action.run); }
+    public void stop()      { isMoveLeft = false; isMoveRight = false; if (!isJumping && !isFalling) { isProne = false; setGroundAnim(AnimatedSprite.Action.idle); } }
+    public void prone()     { isJumping = false; isMoveRight = false; isMoveLeft = false; isProne = true; setGroundAnim(AnimatedSprite.Action.prone); }
 
     private AnimatedSprite.Action currentGroundAction = null;
-    private void setGroundAnim(AnimatedSprite.Action a) { setGroundAnim(a, null); }
-    private void setGroundAnim(AnimatedSprite.Action a, String reason) {
+    private void setGroundAnim(AnimatedSprite.Action a) {
         if (isInShootPose() || isRunShootActive()) return;
-        if (isProne && a != AnimatedSprite.Action.prone) return; // lock while prone
+
+        // lock to prone when S is held
+        if (isProne && a != AnimatedSprite.Action.prone) return;
+
         if (currentGroundAction == a) return;
         currentGroundAction = a;
-        setActionLogged(a, reason);
         runFx(() -> imageView.setAction(a));
     }
 
@@ -228,6 +193,7 @@ public class GameCharacter extends Pane {
         if (x > maxX) x = maxX;
     }
 
+
     public void jump() {
         if (canJump) {
             canJump = false;
@@ -235,10 +201,10 @@ public class GameCharacter extends Pane {
             isFalling = false;
             isProne = false;
 
+            // vertical boost
             yVelocity = yMaxVelocity;
-            onJumpLogged(yVelocity);
 
-            // tiny horizontal carry if walking
+            // add a small horizontal boost if walking
             if (isMoveLeft) {
                 xVelocity = Math.min(xMaxVelocity, xVelocity + xAcceleration);
                 x -= (int) (xVelocity * 0.8);
@@ -248,7 +214,7 @@ public class GameCharacter extends Pane {
             }
 
             clampToWalls();
-            setActionLogged(AnimatedSprite.Action.jump, "jump");
+
             runFx(() -> imageView.setAction(AnimatedSprite.Action.jump));
             currentGroundAction = AnimatedSprite.Action.jump;
         }
@@ -259,8 +225,6 @@ public class GameCharacter extends Pane {
             yVelocity = yMaxVelocity; xVelocity = xMaxVelocity; canJump = false; isJumping = true; isFalling = false; isProne = false;
             x += (int) (direction * xVelocity * 1.2);
             clampToWalls();
-            onJumpLogged(yVelocity);
-            setActionLogged(AnimatedSprite.Action.jump, "jumpForward");
             runFx(() -> { setScaleX(direction); imageView.setAction(AnimatedSprite.Action.jump); });
             currentGroundAction = AnimatedSprite.Action.jump;
         }
@@ -273,7 +237,6 @@ public class GameCharacter extends Pane {
             if (now - lastDownTapMs <= dropTapWindowMs) {
                 ignorePlatformsUntilMs = now + dropIgnoreMs;
                 y += 3; isFalling = true; canJump = false;
-                LOG.fine(tag() + "drop-through (double-tap)");
             }
             lastDownTapMs = now;
         }
@@ -297,9 +260,15 @@ public class GameCharacter extends Pane {
 
     private void setGroundAnimIfAllowed() {
         if (isInShootPose() || isRunShootActive()) return;
-        if (isProne) { setGroundAnim(AnimatedSprite.Action.prone, "holdProne"); return; }
-        if (isMoveLeft || isMoveRight) setGroundAnim(AnimatedSprite.Action.run,  "resumeRun");
-        else                           setGroundAnim(AnimatedSprite.Action.idle, "resumeIdle");
+
+        // if still prone (S held), never override
+        if (isProne) {
+            setGroundAnim(AnimatedSprite.Action.prone);
+            return;
+        }
+
+        if (isMoveLeft || isMoveRight) setGroundAnim(AnimatedSprite.Action.run);
+        else                           setGroundAnim(AnimatedSprite.Action.idle);
     }
     private void onLandedAtTop(int topY) {
         y = spriteYForColliderBottom(topY);
@@ -371,9 +340,7 @@ public class GameCharacter extends Pane {
         this.isMoveLeft = false; this.isMoveRight = false;
         this.isFalling = true; this.canJump = false; this.isJumping = false;
         this.ignorePlatformsUntilMs = System.currentTimeMillis() + 150;
-        boolean wasProne = isProne;
         this.isProne = false;
-        if (wasProne) onProneLogged(false);
 
         runFx(() -> {
             imageView.setFitWidth((int) (characterWidth * 1.8));
@@ -382,7 +349,6 @@ public class GameCharacter extends Pane {
             setTranslateX(x); setTranslateY(y);
         });
         currentGroundAction = AnimatedSprite.Action.idle;
-        setActionLogged(currentGroundAction, "respawn");
     }
 
     private static void fx(Runnable r) {
@@ -390,14 +356,14 @@ public class GameCharacter extends Pane {
         else javafx.application.Platform.runLater(r);
     }
 
+
     // ---------------- Hitbox & Shooting ----------------
     public Rectangle2D getHitbox() {
         return new Rectangle2D(this.x + colOffX(), this.y + currentColOffY(), currentColW(), currentColH());
     }
 
     // Respect the chosen shoot action (no overriding); keep recoil & holds
-    private void playShootPoseAndRecoil(int facingDir, AnimatedSprite.Action shootAction, String modeTag) {
-        setActionLogged(shootAction, "shoot" + (modeTag != null ? ":" + modeTag : ""));
+    private void playShootPoseAndRecoil(int facingDir, AnimatedSprite.Action shootAction) {
         fx(() -> imageView.setAction(shootAction));
 
         boolean isRunStrip = shootAction == AnimatedSprite.Action.proneShoot
@@ -422,8 +388,7 @@ public class GameCharacter extends Pane {
             });
         }
 
-        onShootLogged(modeTag);
-        fx(() -> { try { AudioManager.playSFX("/advpro_game/assets/sfx_shoot.mp3"); } catch (Throwable ignored) {} });
+        fx(() -> AudioManager.playSFX("/advpro_game/assets/sfx_shoot.mp3"));
 
         final int recoil = (isProne ? (int)Math.round((recoilMinPx + (int)(Math.random()*(recoilMaxPx-recoilMinPx+1))) * 0.4)
                 : recoilMinPx + (int)(Math.random()*(recoilMaxPx-recoilMinPx+1)));
@@ -435,6 +400,7 @@ public class GameCharacter extends Pane {
             back.play();
         });
     }
+
 
     private AnimatedSprite.Action chooseShootAnim(Double aimDegOpt) {
         // PRONE: lock to prone pose (horizontal)
@@ -476,7 +442,7 @@ public class GameCharacter extends Pane {
         double my = currentMuzzleY();
 
         AnimatedSprite.Action anim = chooseShootAnim(null);
-        playShootPoseAndRecoil(facing, anim, "legacy");
+        playShootPoseAndRecoil(facing, anim);
 
         // Horizontal bullet (legacy)
         Bullet b = new Bullet(mx, my, facing, 0, 480.0, 1, 1.6, false);
@@ -486,6 +452,7 @@ public class GameCharacter extends Pane {
 
     // Creates a bullet if trigger pressed & cooldown ok. (keyboard or mouse; angle optional)
     public Bullet tryCreateBullet(Keys keys) {
+        // trigger (hold to shoot with mouse buttons or SPACE)
         boolean trigger =
                 keys.isClicked(MouseButton.PRIMARY) ||
                         keys.isClicked(MouseButton.SECONDARY) ||
@@ -500,7 +467,7 @@ public class GameCharacter extends Pane {
 
         int facing = getFacingDir();
         AnimatedSprite.Action anim = chooseShootAnim(null);
-        playShootPoseAndRecoil(facing, anim, "8way");
+        playShootPoseAndRecoil(facing, anim);
 
         Bullet bullet = new Bullet(s.x, s.y, s.dx, s.dy, 480.0, 1, 1.6, false);
         if (bulletSink != null) bulletSink.accept(bullet);
@@ -509,6 +476,7 @@ public class GameCharacter extends Pane {
 
     // Angle-aware version used by GameLoop. aimDeg is snapped to {-45, 0, +45}.
     public Bullet tryCreateBullet(Keys keys, Double aimDegOpt) {
+        // trigger (hold to shoot with mouse buttons or SPACE)
         boolean trigger =
                 keys.isClicked(MouseButton.PRIMARY) ||
                         keys.isClicked(MouseButton.SECONDARY) ||
@@ -523,6 +491,7 @@ public class GameCharacter extends Pane {
         double dirX, dirY;
 
         if (aimDegOpt != null) {
+            // Use snapped mouse angle, mirrored by facing; screen Y+ is down, so sin(rad) is correct
             int facing = getFacingDir(); // +1 right, -1 left
             double rad = Math.toRadians(aimDegOpt);
             dirX = Math.cos(rad) * facing;
@@ -530,6 +499,7 @@ public class GameCharacter extends Pane {
             double len = Math.hypot(dirX, dirY);
             if (len == 0) { dirX = facing; dirY = 0; } else { dirX /= len; dirY /= len; }
         } else {
+            // Fallback to keyboard 8-way aim
             Shot s = computeShot(keys);
             mx = s.x; my = s.y; dirX = s.dx; dirY = s.dy;
         }
@@ -541,8 +511,7 @@ public class GameCharacter extends Pane {
 
         int facing = getFacingDir();
         AnimatedSprite.Action anim = chooseShootAnim(aimDegOpt);
-        String mode = (aimDegOpt == null ? "8way" : ("snap:" + String.format("%.0f", aimDegOpt)));
-        playShootPoseAndRecoil(facing, anim, mode);
+        playShootPoseAndRecoil(facing, anim);
 
         Bullet bullet = new Bullet(mx, my, dirX, dirY, 480.0, 1, 1.6, false);
         if (bulletSink != null) bulletSink.accept(bullet);
@@ -555,23 +524,11 @@ public class GameCharacter extends Pane {
     }
 
     // -------- scoring & lives --------
-    public void addScore(int delta){
-        if (delta == 0) return;
-        this.score += delta;
-        if (LOG.isLoggable(Level.INFO)) {
-            LOG.info(tag() + "score +" + delta + " → " + this.score);
-        }
-    }
+    public void addScore(int delta){ this.score += delta; }
     public int getLives() { return lives; }
-    public void setLives(int lives) {
-        int before = this.lives;
-        this.lives = Math.max(0, lives);
-        if (LOG.isLoggable(Level.INFO)) {
-            LOG.info(tag() + "life set " + before + "→" + this.lives);
-        }
-    }
-    public void loseLife() { loseLifeLogged(1, "hit"); }
-    public void gainLife() { gainLifeLogged(1, "bonus"); }
+    public void setLives(int lives) { this.lives = Math.max(0, lives); }
+    public void loseLife() { if (lives > 0) lives--; }
+    public void gainLife() { lives++; }
 
     // -------- getters / setters --------
     public int getY() { return y; }
@@ -633,44 +590,13 @@ public class GameCharacter extends Pane {
     //-----------helper------------
     public int getFacingDir() { return getScaleX() >= 0 ? 1 : -1; }
 
-    public void fireUltimateLaser(advpro_game.view.GameStage stage) {
-        long now = System.currentTimeMillis();
-        if (now - lastUltTimeMs < ULT_COOLDOWN_MS) return;
-        lastUltTimeMs = now;
-
-        int dir = (getScaleX() >= 0) ? 1 : -1;
-
-        // --- muzzle position (tweak to your sprite) ---
-        double muzzleX = getTranslateX() + (dir > 0 ? 62 : 4);
-        double muzzleY = getTranslateY() + 34;
-
-        // Visual effect (uses your sprite-sheet class)
-        LaserBeamUltimate fx = new LaserBeamUltimate(muzzleX, muzzleY, dir, ULT_SCALE);
-        stage.spawnUltimateLaser(fx);
-
-        // Wipe: remove ALL enemies now.
-        // Important: iterate over a COPY to avoid ConcurrentModification.
-        java.util.List<Enemy> copy = new java.util.ArrayList<>(stage.getEnemies());
-        for (Enemy e : copy) {
-            try {
-                stage.removeEnemyIfPresent(e);  // your stage helper
-                // If you prefer damage instead of removal, you could do: e.hit(999999);
-            } catch (Throwable ignore) { }
-        }
-
-        // Optional SFX
-        // advpro_game.audio.AudioManager.safePlaySFX("/advpro_game/assets/sfx_ultimate.wav");
-    }
-
-
-
     // Selects the proper shoot animation for a snapped angle (-45/0/+45),
     // honoring the "prone = horizontal only" rule.
     private void setShootAnimForAngle(double aimDeg) {
         if (isRunShootActive()) return;
 
         if (isProne) {
-            setGroundAnim(AnimatedSprite.Action.prone, "aimWhileProne");
+            setGroundAnim(AnimatedSprite.Action.prone);
             return;
         }
 
@@ -683,93 +609,12 @@ public class GameCharacter extends Pane {
         if (running) {
             a = upAim   ? AnimatedSprite.Action.runShootUp
                     : downAim ? AnimatedSprite.Action.runShootDown
-                    : AnimatedSprite.Action.proneShoot; // horizontal run+shoot strip
+                    :           AnimatedSprite.Action.proneShoot; // horizontal run+shoot strip
         } else {
             a = upAim   ? AnimatedSprite.Action.shootUp
                     : downAim ? AnimatedSprite.Action.shootDown
-                    : AnimatedSprite.Action.shoot;
+                    :           AnimatedSprite.Action.shoot;
         }
-        setActionLogged(a, "aim");
         runFx(() -> imageView.setAction(a));
-    }
-
-    // ---- Logging ----
-    private static final Logger LOG = Logger.getLogger(GameCharacter.class.getName());
-    private String playerTag = "P1"; // change if you support multiple players
-
-    // optional spam guard for repeated actions (ms)
-    private long lastActionLogMs = 0;
-    private long actionLogCooldownMs = 120;
-
-    // ---- Action state (keep your enum Action) ----
-    private AnimatedSprite.Action currentAction = AnimatedSprite.Action.idle;
-
-    // Simple tag used in log lines
-    private String tag() { return "[" + playerTag + "] "; }
-    /** Log an action change at FINE level, with optional reason. */
-    public void setActionLogged(AnimatedSprite.Action next, String reason) {
-        if (next == null || next == currentAction) return;
-        long now = System.currentTimeMillis();
-        if (now - lastActionLogMs < actionLogCooldownMs && next == AnimatedSprite.Action.run) {
-            // throttle super chatty "run" transitions
-        } else {
-            if (LOG.isLoggable(Level.FINE)) {
-                LOG.fine(tag() + "action " + currentAction + " → " + next +
-                        (reason != null && !reason.isBlank() ? " (" + reason + ")" : ""));
-            }
-            lastActionLogMs = now;
-        }
-        currentAction = next;
-    }
-
-    /** Call when the player shoots (any stance). */
-    public void onShootLogged(String mode) {
-        if (LOG.isLoggable(Level.FINE)) {
-            LOG.fine(tag() + "shoot" + (mode != null && !mode.isBlank() ? " [" + mode + "]" : ""));
-        }
-    }
-
-    /** Call when the player jumps. */
-    public void onJumpLogged(double vy) {
-        if (LOG.isLoggable(Level.FINE)) {
-            LOG.fine(tag() + "jump vy=" + String.format("%.2f", vy));
-        }
-    }
-
-    /** Call when the player goes prone / leaves prone. */
-    public void onProneLogged(boolean entering) {
-        if (LOG.isLoggable(Level.FINE)) {
-            LOG.fine(tag() + (entering ? "enter prone" : "exit prone"));
-        }
-    }
-
-    /** Score helpers (INFO for visibility). */
-    public void addScoreLogged(int delta, String why) {
-        if (delta == 0) return;
-        this.score += delta;
-        if (LOG.isLoggable(Level.INFO)) {
-            LOG.info(tag() + "score +" + delta + " → " + this.score +
-                    (why != null && !why.isBlank() ? " : " + why : ""));
-        }
-    }
-
-    public void loseLifeLogged(int n, String why) {
-        if (n <= 0) return;
-        int before = this.lives;
-        this.lives = Math.max(0, this.lives - n);
-        if (LOG.isLoggable(Level.WARNING)) {
-            LOG.warning(tag() + "life -" + n + " (" + before + "→" + this.lives + ")" +
-                    (why != null && !why.isBlank() ? " : " + why : ""));
-        }
-    }
-
-    public void gainLifeLogged(int n, String why) {
-        if (n <= 0) return;
-        int before = this.lives;
-        this.lives += n;
-        if (LOG.isLoggable(Level.INFO)) {
-            LOG.info(tag() + "life +" + n + " (" + before + "→" + this.lives + ")" +
-                    (why != null && !why.isBlank() ? " : " + why : ""));
-        }
     }
 }

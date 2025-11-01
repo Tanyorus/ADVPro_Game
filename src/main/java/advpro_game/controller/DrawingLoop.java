@@ -28,7 +28,7 @@ public class DrawingLoop implements Runnable {
             c.checkReachFloor();
 
             // Clamp within world
-            int x = c.getX();
+            int x = (int) c.getX();
             int w = c.getCharacterWidth();
             if (x < 0) c.setX(0);
             else if (x + w > GameStage.WIDTH) c.setX(GameStage.WIDTH - w);

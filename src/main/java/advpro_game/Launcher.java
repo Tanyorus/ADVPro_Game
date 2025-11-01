@@ -12,32 +12,35 @@ import javafx.scene.Scene;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.stage.Stage;
+
 import java.util.logging.*;
 
-
+/**
+ * Entry point. Handles menu -> game session lifecycle, input wiring, and clean thread shutdown.
+ */
 public class Launcher extends Application {
 
     private Stage primaryStage;
     private Thread gameThread, drawThread;
     private GameLoop gameLoop;
     private DrawingLoop drawingLoop;
-    private StageManager stageManager; // created per game session
+    private StageManager stageManager; // new per session
 
     public static void main(String[] args) { launch(args); }
 
+    // ---------- Logging ----------
     private static void setupLogging() {
-        // prettier single-line format
+        // Prettier single-line formatter
         System.setProperty("java.util.logging.SimpleFormatter.format",
                 "%1$tF %1$tT %4$s %3$s | %5$s%6$s%n");
 
         Logger root = Logger.getLogger("");
-        // Make sure console handler exists and is permissive
         boolean hasConsole = false;
         for (Handler h : root.getHandlers()) {
-            if (h instanceof ConsoleHandler) {
+            if (h instanceof ConsoleHandler ch) {
                 hasConsole = true;
-                h.setLevel(Level.ALL);
-                h.setFormatter(new SimpleFormatter());
+                ch.setLevel(Level.ALL);
+                ch.setFormatter(new SimpleFormatter());
             }
         }
         if (!hasConsole) {
@@ -47,26 +50,22 @@ public class Launcher extends Application {
             root.addHandler(ch);
         }
 
-        // Global default
         root.setLevel(Level.INFO);
-
-        // Per-class tuning (adjust to taste)
-        Logger.getLogger(advpro_game.view.GameStage.class.getName()).setLevel(Level.INFO);  // stage events, spawns, scores
-        Logger.getLogger(advpro_game.model.GameCharacter.class.getName()).setLevel(Level.FINE); // actions, shoots
-        // If you have a StageManager:
+        Logger.getLogger(advpro_game.view.GameStage.class.getName()).setLevel(Level.INFO);
+        Logger.getLogger(advpro_game.model.GameCharacter.class.getName()).setLevel(Level.FINE);
         // Logger.getLogger(advpro_game.controller.StageManager.class.getName()).setLevel(Level.INFO);
     }
-
 
     @Override
     public void start(Stage stage) {
         setupLogging();
         this.primaryStage = stage;
 
-        // Friendly uncaught error handler (special-case GameException)
+        // Friendly uncaught handler
         Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
             Throwable cause = (e.getCause() != null) ? e.getCause() : e;
-            if (cause instanceof GameException) {
+            // Avoid pattern matching features; keep it Java 21-friendly
+            if (cause != null && "advpro_game.GameException".equals(cause.getClass().getName())) {
                 System.err.println("[Game Error] " + cause.getMessage());
             } else {
                 System.err.println("[Uncaught] in " + t.getName());
@@ -77,65 +76,72 @@ public class Launcher extends Application {
         showMenu();
     }
 
+    // ---------- Menu ----------
     /** Show main menu (Start / Exit). */
     private void showMenu() {
-        // Optional menu BGM
-        // AudioManager.playBGM("/advpro_game/assets/bgm_menu.mp3");
+        // Optional: AudioManager.playBGM("/advpro_game/assets/bgm_menu.mp3");
+
+        // Ensure previous session is fully stopped
+        stopLoops();
+        AudioManager.stopBGM();
 
         MenuView menu = new MenuView(this::startGame, Platform::exit);
         Scene menuScene = new Scene(menu, 800, 400);
-        primaryStage.setTitle("Contra Clone");
+        primaryStage.setTitle("Contre two one");
         primaryStage.setScene(menuScene);
         primaryStage.setResizable(false);
         primaryStage.show();
 
-        // Stop any leftover game audio just in case
-        AudioManager.stopBGM();
-
-        // Ensure no dangling threads from a previous session
-        stopLoops();
+        // Clean close from menu as well
+        primaryStage.setOnCloseRequest(e -> {
+            stopLoops();
+            AudioManager.stopBGM();
+            Platform.exit();
+        });
     }
 
+    // ---------- Game session ----------
     /** Build and start a fresh game session. */
     private void startGame() {
         try {
             // Stop any menu BGM when entering gameplay
             AudioManager.stopBGM();
 
+            // Safety: don’t double-run threads if coming from Retry quickly
+            stopLoops();
+
             GameStage gameStage = new GameStage();
             Scene scene = new Scene(gameStage, GameStage.WIDTH, GameStage.HEIGHT);
             primaryStage.setScene(scene);
             primaryStage.setResizable(false);
 
-            // ---- SCENE-LEVEL INPUT (reliable focus) ----
+            // Scene-level input (keeps working even when a node steals focus)
             scene.addEventFilter(KeyEvent.KEY_PRESSED,  e -> gameStage.getKeys().add(e.getCode()));
             scene.addEventFilter(KeyEvent.KEY_RELEASED, e -> gameStage.getKeys().remove(e.getCode()));
             scene.addEventFilter(MouseEvent.MOUSE_PRESSED,  e -> gameStage.getKeys().add(e.getButton()));
             scene.addEventFilter(MouseEvent.MOUSE_RELEASED, e -> gameStage.getKeys().remove(e.getButton()));
-
-            // Keep keyboard focus on the game whenever you click inside the window
+            // Click anywhere to restore keyboard focus to the game
             scene.addEventFilter(MouseEvent.MOUSE_CLICKED, e -> gameStage.requestFocus());
-
-            // Ensure focus lands on the game at start
             Platform.runLater(gameStage::requestFocus);
 
-            // Create StageManager AFTER scene is attached (FX timing safe)
+            // Create/attach StageManager AFTER scene is attached (FX timing safe)
             stageManager = new StageManager(gameStage);
             Platform.runLater(stageManager::start);
 
-            // Wire Retry / Exit-to-Menu actions from in-game UI
+            // Wire Retry / Exit-to-Menu actions called by GameOverOverlay buttons
             gameStage.setOnRetry(() -> {
+                // Rebuild a clean session
                 stopLoops();
-                Platform.runLater(this::startGame);  // rebuild a fresh session
+                Platform.runLater(this::startGame);
             });
             gameStage.setOnExitToMenu(() -> {
                 stopLoops();
                 Platform.runLater(this::showMenu);
             });
 
-            // --- Start loops ---
-            gameLoop = new GameLoop(gameStage);            // single-arg ctor
-            gameLoop.attachStageManager(stageManager);     // call once
+            // Start loops
+            gameLoop = new GameLoop(gameStage);
+            gameLoop.attachStageManager(stageManager);
             drawingLoop = new DrawingLoop(gameStage);
 
             gameThread = new Thread(gameLoop, "GameLoopThread");
@@ -145,7 +151,7 @@ public class Launcher extends Application {
             gameThread.start();
             drawThread.start();
 
-            // On window close: clean shutdown
+            // Window close → clean shutdown
             primaryStage.setOnCloseRequest(e -> {
                 stopLoops();
                 AudioManager.stopBGM();
@@ -153,18 +159,19 @@ public class Launcher extends Application {
             });
 
         } catch (Throwable ex) {
-            // Print stack and rethrow as GameException for the handler above
             ex.printStackTrace();
+            // If you have advpro_game.GameException defined elsewhere, this rethrow helps the handler above
             throw new GameException("Failed to start the game.", ex);
         }
     }
 
-    /** Stop threads and clear references safely. */
+    /** Stop threads and clear references safely. Idempotent. */
     private void stopLoops() {
         try { if (gameLoop != null) gameLoop.stop(); } catch (Throwable ignore) {}
         try { if (drawingLoop != null) drawingLoop.stop(); } catch (Throwable ignore) {}
-        try { if (gameThread != null) gameThread.join(150); } catch (InterruptedException ignore) {}
-        try { if (drawThread != null) drawThread.join(150); } catch (InterruptedException ignore) {}
+
+        try { if (gameThread != null && gameThread.isAlive()) gameThread.join(200); } catch (InterruptedException ignore) {}
+        try { if (drawThread != null && drawThread.isAlive()) drawThread.join(200); } catch (InterruptedException ignore) {}
 
         gameLoop = null;
         drawingLoop = null;
@@ -174,7 +181,7 @@ public class Launcher extends Application {
         // Stop any playing music
         AudioManager.stopBGM();
 
-        // Let GC reclaim previous StageManager (only short PauseTransitions inside)
+        // Let GC reclaim previous StageManager (only lightweight timers inside)
         stageManager = null;
     }
 }

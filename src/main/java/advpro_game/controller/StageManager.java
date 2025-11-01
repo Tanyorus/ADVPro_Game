@@ -15,50 +15,46 @@ public class StageManager {
     private final GameStage stage;
     private int currentStage = 1;
 
-    // Per-stage state flags (one-shots)
-    private boolean sawAnyMinionThisStage = false;
-    private boolean preparingBoss = false;
-    private boolean bossSpawned = false;
-    private boolean stageTransitioning = false;
+    // Per-stage one-shots
+    private boolean sawAnyMinionThisStage = false; // flipped when minions actually present
+    private boolean preparingBoss = false;         // boss spawn scheduled
+    private boolean bossSpawned = false;           // boss node created
+    private boolean stageTransitioning = false;    // prevents duplicate clear
 
-    private static final int SPAWN_AFTER_STAGE_ARM_MS = 120;
-    private static final int BOSS_DELAY_MS            = 1000;
+    // Timings
+    private static final int SPAWN_AFTER_STAGE_ARM_MS = 120;  // wait a tick after GameStage.setStage(...)
+    private static final int BOSS_DELAY_MS            = 1000; // dramatic pause before boss
 
-    public StageManager(GameStage stage) { this.stage = stage; }
+    public StageManager(GameStage stage) {
+        this.stage = stage;
+        // Let GameStage know we exist (its setStageManager handles this safely)
+        this.stage.setStageManager(this);
+    }
 
     // ------------ Lifecycle ------------
+
     public void start() {
         Platform.runLater(() -> {
-            if (stage.getCurrentStage() != currentStage) {
-                currentStage = Math.max(1, stage.getCurrentStage());
-            } else {
-                stage.setStage(currentStage);
-            }
+            // Build (or rebuild) the current stage
+            stage.setStage(currentStage);
 
+            // Spawn the first wave shortly after the stage is armed
             PauseTransition pt = new PauseTransition(Duration.millis(SPAWN_AFTER_STAGE_ARM_MS));
-            pt.setOnFinished(ev -> {
-                if (!stage.isWorldReady()) {
-                    PauseTransition retry = new PauseTransition(Duration.millis(30));
-                    retry.setOnFinished(_ev -> spawnEnemiesForStageSafe());
-                    retry.play();
-                } else {
-                    spawnEnemiesForStageSafe();
-                }
-            });
+            pt.setOnFinished(_ev -> spawnEnemiesForStage(currentStage));
             pt.play();
+
             LOG.info("Stage " + currentStage + " started.");
         });
     }
 
-    /** Call every tick from GameLoop. */
+    /** Call every tick from your GameLoop. */
     public void update() {
-        if (!stage.isWorldReady()) return;
-
-        // purge dead safely
+        // 0) Purge dead enemies safely
         for (Enemy e : new ArrayList<>(stage.getEnemies())) {
             if (e.isDead()) stage.removeEnemy(e);
         }
 
+        // 1) Stage logic (minion -> boss -> clear)
         boolean anyBossAlive   = stage.getEnemies().stream().anyMatch(e -> e instanceof Boss);
         boolean anyMinionAlive = stage.getEnemies().stream().anyMatch(this::isMinion);
 
@@ -66,18 +62,21 @@ public class StageManager {
             sawAnyMinionThisStage = true;
         }
 
+        // When all minions gone (and we had minions), schedule boss once
         if (sawAnyMinionThisStage && !anyMinionAlive && !anyBossAlive && !preparingBoss && !bossSpawned) {
             preparingBoss = true;
             LOG.info("All minions cleared → preparing boss...");
             spawnBossDelayed();
         }
 
+        // Stage clear only after boss spawned and now nothing remains
         if (bossSpawned && !anyBossAlive && !anyMinionAlive && !stageTransitioning) {
             handleStageClearOnce();
         }
     }
 
     // ------------ Stage flow helpers ------------
+
     private void handleStageClearOnce() {
         stageTransitioning = true;
         LOG.info("Stage " + currentStage + " cleared!");
@@ -92,7 +91,7 @@ public class StageManager {
                 Platform.runLater(() -> {
                     stage.setStage(currentStage);
                     PauseTransition arm = new PauseTransition(Duration.millis(SPAWN_AFTER_STAGE_ARM_MS));
-                    arm.setOnFinished(_ev -> spawnEnemiesForStageSafe());
+                    arm.setOnFinished(_ev -> spawnEnemiesForStage(currentStage));
                     arm.play();
                     LOG.info("Loading stage " + currentStage + "...");
                 });
@@ -114,7 +113,7 @@ public class StageManager {
     private void spawnBossDelayed() {
         PauseTransition delay = new PauseTransition(Duration.millis(BOSS_DELAY_MS));
         delay.setOnFinished(e -> Platform.runLater(() -> {
-            if (bossSpawned || !stage.isWorldReady()) { preparingBoss = false; return; }
+            if (bossSpawned) { preparingBoss = false; return; }
             spawnBossForStage();
             bossSpawned = true;
             preparingBoss = false;
@@ -123,103 +122,99 @@ public class StageManager {
         delay.play();
     }
 
-    // ------------ Enemy sets per stage ------------
-    private void spawnEnemiesForStageSafe() {
-        if (!stage.isWorldReady()) return;
-        spawnEnemiesForStage();
-    }
+    // ------------ Enemy waves per stage ------------
 
-    private void spawnEnemiesForStage() {
-        LOG.info("Spawning enemies for stage " + currentStage);
-        switch (currentStage) {
-            case 1 -> spawnStage1();
-            case 2 -> spawnStage2();
-            case 3 -> spawnStage3();
-            default -> spawnStage1();
+    /** Public API called by GameStage on Retry (already wired in your patched GameStage). */
+    public void spawnEnemiesForStage(int stageIndex) {
+        this.currentStage = Math.max(1, stageIndex);
+        resetPerStageFlags(); // fresh wave behavior
+
+        // Let GameStage provide a safe default wave set (works even if you don’t customize below)
+        stage.spawnDefaultMinionsFor(currentStage);
+
+        // Mark as seen if anything actually appeared
+        if (!stage.getEnemies().isEmpty()) {
+            sawAnyMinionThisStage = true;
         }
-    }
 
-    private void spawnStage1() {
-        stage.addEnemy(new Minion(150, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(250, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(350, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(450, GameStage.GROUND - 50));
-        stage.addEnemy(new EliteMinion(550, GameStage.GROUND - 60));
-    }
-
-    private void spawnStage2() {
-        stage.addEnemy(new Minion(100, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(200, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(300, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(400, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(500, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(600, GameStage.GROUND - 50));
-        stage.addEnemy(new EliteMinion(700, GameStage.GROUND - 60));
-    }
-
-    private void spawnStage3() {
-        stage.addEnemy(new Minion(120, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(200, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(280, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(360, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(440, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(520, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(600, GameStage.GROUND - 50));
-        stage.addEnemy(new Minion(680, GameStage.GROUND - 50));
-        stage.addEnemy(new EliteMinion(750, GameStage.GROUND - 60));
+        LOG.info("Enemies (re)spawned for stage " + currentStage);
     }
 
     // ------------ Boss spawns (constructor-safe) ------------
+
     private void spawnBossForStage() {
         Boss boss;
         try {
             switch (currentStage) {
                 case 1 -> {
-                    // Stage 1: plain boss (bossType=1). Ensure NO custom bullet.
-                    boss = new Boss(590, GameStage.GROUND - 120);
-                    try { boss.setBulletConfig(null); } catch (Throwable ignored) {}
+                    boss = new Boss(580, 208,86, 20,
+                            "/advpro_game/assets/boss1_1.png",
+                            2, 2, 1, 43, 10,
+                            1);
+                    boss.setCustomAnimatedBullet(
+                            "/advpro_game/assets/boss1B.png",
+                            3.0,  // scale
+                            6,    // frames
+                            6,    // cols
+                            1,    // rows
+                            14,   // fw
+                            10    // fh
+                    );
                 }
                 case 2 -> {
-                    // Stage 2: Java boss (bossType=2) with animated java_bullet ONLY here.
-                    boss = new Boss(
-                            550, GameStage.GROUND - 380,
-                            102, 113,
-                            "/advpro_game/assets/bossjava.png",
-                            3, 3, 1,
-                            102, 113,
-                            2
-                    );
+                    // Prefer rich ctor; fallback to simple if unavailable
                     try {
+                        boss = new Boss(
+                                550, GameStage.GROUND - 380,
+                                170, 170,
+                                "/advpro_game/assets/bossjava.png",
+                                2, 2, 0, 112, 112,
+                                1
+                        );
                         boss.setCustomAnimatedBullet(
                                 "/advpro_game/assets/java_bullet.png",
-                                1.6,
-                                4, 4, 1,
-                                24, 24
+                                2.0, 4, 4, 1, 25, 27
                         );
-                    } catch (Throwable ignored) {
-                        LOG.info("Boss.setCustomAnimatedBullet not available; continuing.");
-                    }
-                    try { boss.addHp(4); } catch (Throwable ignored) {}
+                        try { boss.addHp(4); } catch (Throwable ignored) {}
 
-                    // Optional elites around the boss
-                    try {
-                        stage.addEnemy(new EliteMinion(550, GameStage.GROUND - 80, 80, 80,
-                                "/advpro_game/assets/elite_minion_2.png",
-                                3, 2, 2, 32, 32, 300));
-                    } catch (Throwable ignored) {}
-                    try { stage.addEnemy(new EliteMinion(600, GameStage.GROUND - 60, 200)); } catch (Throwable ignored) {}
-                    try { stage.addEnemy(new EliteMinion(650, GameStage.GROUND - 60, 100)); } catch (Throwable ignored) {}
+                        // Optional elites to add pressure
+                        try {
+                            stage.addEnemy(new EliteMinion(550, GameStage.GROUND - 80, 80, 80,
+                                    "/advpro_game/assets/elite_minion_2.png",
+                                    3, 2, 2, 32, 32, 300));
+                            stage.addEnemy(new EliteMinion(600, GameStage.GROUND - 80, 80, 80,
+                                    "/advpro_game/assets/elite_minion_2.png",
+                                    3, 2, 2, 32, 32, 200));
+                            stage.addEnemy(new EliteMinion(650, GameStage.GROUND - 80, 80, 80,
+                                    "/advpro_game/assets/elite_minion_2.png",
+                                    3, 2, 2, 32, 32, 100));
+                        } catch (Throwable ignored) {}
+                    } catch (Throwable richCtorMissing) {
+                        boss = new Boss(600, GameStage.GROUND - 72);
+                        try { boss.addHp(4); } catch (Throwable ignored) {}
+                    }
                 }
-                default -> {
-                    // Stage 3 (or others): plain boss (bossType defaults). Ensure NO custom bullet.
-                    boss = new Boss(200, GameStage.GROUND - 72);
+                case 3 -> {
+                    boss = new Boss(500, 50,200, 200,
+                            "/advpro_game/assets/boss_3.png",
+                            8, 8, 1, 80, 71,
+                            1);
+                    boss.setCustomAnimatedBullet(
+                            "/advpro_game/assets/boss_3B.png",
+                            3.0, 3, 3, 1, 32, 32
+                    );
+
+                    // Add some helpers for chaos
+                    stage.addEnemy(new Minion(50,  50,60, 60,"/advpro_game/assets/minion_3-2.png",3,3,1,24,16));
+                    stage.addEnemy(new Minion(200, 80,60, 60,"/advpro_game/assets/minion_3-2.png",3,3,1,24,16));
+                    stage.addEnemy(new Minion(350, 50,60, 60,"/advpro_game/assets/minion_3-2.png",3,3,1,24,16));
+                    stage.addEnemy(new EliteMinion(650, GameStage.GROUND - 120, 80, 160,"/advpro_game/assets/elite_3.png",10,5,1,50,66,200));
                     try { boss.addHp(8); } catch (Throwable ignored) {}
-                    try { boss.setBulletConfig(null); } catch (Throwable ignored) {}
                 }
+                default -> boss = new Boss(580, GameStage.GROUND - 72);
             }
         } catch (Throwable t) {
-            boss = new Boss(580, GameStage.GROUND - 72);
-            try { boss.setBulletConfig(null); } catch (Throwable ignored) {}
+            boss = new Boss(580, GameStage.GROUND - 72); // absolute fallback
         }
 
         stage.addEnemy(boss);
@@ -231,6 +226,8 @@ public class StageManager {
     }
 
     // ------------ External controls / hooks ------------
+
+    /** Hard reset to a specific stage (e.g., from main menu). */
     public void hardResetToStage(int stageIndex) {
         currentStage = Math.max(1, stageIndex);
         resetPerStageFlags();
@@ -238,24 +235,17 @@ public class StageManager {
         Platform.runLater(() -> {
             stage.setStage(currentStage);
             PauseTransition arm = new PauseTransition(Duration.millis(SPAWN_AFTER_STAGE_ARM_MS));
-            arm.setOnFinished(_ev -> spawnEnemiesForStageSafe());
+            arm.setOnFinished(_ev -> spawnEnemiesForStage(currentStage));
             arm.play();
         });
     }
 
-    public void spawnEnemiesForStage(int stageIndex) {
-        this.currentStage = Math.max(1, stageIndex);
-        resetPerStageFlags();
-        PauseTransition arm = new PauseTransition(Duration.millis(SPAWN_AFTER_STAGE_ARM_MS));
-        arm.setOnFinished(_ev -> spawnEnemiesForStageSafe());
-        arm.play();
-        LOG.info("Enemies (re)spawned for stage " + currentStage);
-    }
-
     // ------------ Helpers ------------
+
     private boolean isMinion(Enemy e) {
         if (e == null) return false;
         if (e instanceof Boss) return false;
+        // Treat everything not Boss as "minion" for gating
         return true;
     }
 }

@@ -5,6 +5,7 @@ module avdpro_game {
     requires java.logging;
     requires javafx.media;
 
+
     opens advpro_game to javafx.fxml;
     exports advpro_game;
 }

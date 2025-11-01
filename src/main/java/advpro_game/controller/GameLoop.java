@@ -13,7 +13,7 @@ import java.util.List;
 
 public class GameLoop implements Runnable {
     private final GameStage gameStage;
-    private StageManager stageManager;     // may be injected later
+    private StageManager stageManager;     // optional
 
     private final int frameRate  = 60;
     private final float interval = 1000.0f / frameRate;
@@ -27,13 +27,9 @@ public class GameLoop implements Runnable {
 
     public GameLoop(GameStage gameStage) {
         this.gameStage = gameStage;
-        // StageManager is lazy-inited in run(), or can be injected via attachStageManager()
     }
 
-    /** Optional hook if you construct StageManager elsewhere (e.g., in Launcher). */
-    public void attachStageManager(StageManager m) {
-        this.stageManager = m;
-    }
+    public void attachStageManager(StageManager m) { this.stageManager = m; }
 
     public void stop() { running = false; }
 
@@ -42,9 +38,7 @@ public class GameLoop implements Runnable {
         if (list.isEmpty()) return;
 
         final boolean worldReady = gameStage.isWorldReady();
-
-        // Player is NOT slowed by slow-mo.
-        final double dtPlayer = dtSec;
+        final double dtPlayer = dtSec; // player not slowed
 
         for (GameCharacter c : list) {
             try {
@@ -57,30 +51,23 @@ public class GameLoop implements Runnable {
                 boolean right        = gameStage.getKeys().isPressed(c.getRightKey());
                 boolean down         = gameStage.getKeys().isPressed(c.getDownKey());
 
-                // edge detection (tap to jump with W/UP/SPACE)
                 boolean upEdge    = (!prevW && wPressed) || (!prevUp && upPressed);
                 boolean spaceEdge = (!prevSpace && spacePressed);
 
-                // movement / prone
                 if (down && !(left || right)) c.prone();
                 else if (left && !right)      c.moveLeft();
                 else if (right && !left)      c.moveRight();
                 else                          c.stop();
 
-                // jump on edge
                 if (upEdge || spaceEdge) c.jump();
-
-                // double-tap down drop-through (implemented inside character)
                 c.handleDownKey(down);
 
-                // shooting — mouse-aim snapped to -45, 0, +45 degrees
                 if (worldReady && !c.isDisabled()) {
-                    double aimDeg = getSnappedAimAngleDeg(c);
+                    double aimDeg = gameStage.getSnappedAimAngleDeg(c);
                     Bullet b = c.tryCreateBullet(gameStage.getKeys(), aimDeg);
                     if (b != null) gameStage.addBullet(b);
                 }
 
-                // physics + collisions (player at full speed; repaint expects ms)
                 c.repaint(dtPlayer * 1000.0);
                 c.checkPlatformCollision(gameStage.getPlatforms());
                 c.checkReachHighest();
@@ -90,27 +77,18 @@ public class GameLoop implements Runnable {
             }
         }
 
-        // update previous key states (when world not ready, treat as not-pressed to avoid buffered edges)
         prevW     = gameStage.getKeys().isPressed(KeyCode.W)     && worldReady;
         prevUp    = gameStage.getKeys().isPressed(KeyCode.UP)    && worldReady;
         prevSpace = gameStage.getKeys().isPressed(KeyCode.SPACE) && worldReady;
     }
 
-    // Let GameStage compute the snapped aim based on its tracked mouse.
-    private double getSnappedAimAngleDeg(GameCharacter c) {
-        return gameStage.getSnappedAimAngleDeg(c);
-    }
-
     // ===================== BULLETS =====================
     private void updateBullets(double dtSeconds) {
-        // enemy bullets are slowed; player bullets are not
         final double s        = gameStage.getTimeScale();
         final double dtEnemy  = dtSeconds * s;
         final double dtPlayer = dtSeconds;
 
         var bullets = gameStage.getBullets();
-
-        // snapshot to avoid CME
         var snapshot = new ArrayList<>(bullets);
         var toRemove = new ArrayList<Bullet>();
 
@@ -122,16 +100,12 @@ public class GameLoop implements Runnable {
                 b.update(enemyShot ? dtEnemy : dtPlayer);
             } catch (Throwable ignored) {}
 
-            // Cull far-off bullets (logic only; visual removal is FX-safe inside GameStage)
             if (b.getX() < -100 || b.getX() > GameStage.WIDTH + 100 ||
                     b.getY() < -100 || b.getY() > GameStage.HEIGHT + 200) {
                 toRemove.add(b);
             }
         }
-
-        if (!toRemove.isEmpty()) {
-            for (Bullet b : toRemove) gameStage.removeBullet(b);
-        }
+        for (Bullet b : toRemove) gameStage.removeBullet(b);
     }
 
     // ===================== ENEMIES =====================
@@ -139,23 +113,17 @@ public class GameLoop implements Runnable {
         if (gameStage.getGameCharacterList().isEmpty()) return;
 
         final boolean worldReady = gameStage.isWorldReady();
-        final double scaled = dtSeconds * gameStage.getTimeScale(); // enemies ARE slowed
+        final double scaled = dtSeconds * gameStage.getTimeScale();
         GameCharacter player = gameStage.getGameCharacterList().get(0);
 
-        // defensive copy to avoid CME
         var snapshot = new ArrayList<>(gameStage.getEnemies());
-
         for (var enemy : snapshot) {
-            try {
-                enemy.update(scaled, player);
-            } catch (NoSuchMethodError | Exception ignored) {}
-
-            // Do not spawn enemy bullets while world is rebuilding
+            try { enemy.update(scaled, player); } catch (Throwable ignored) {}
             if (worldReady) {
                 try {
                     Bullet b = enemy.tryShoot(player);
                     if (b != null) gameStage.addBullet(b);
-                } catch (Exception ignored) {}
+                } catch (Throwable ignored) {}
             }
         }
     }
@@ -181,27 +149,22 @@ public class GameLoop implements Runnable {
         var enemiesSnap = new ArrayList<>(gameStage.getEnemies());
 
         for (GameCharacter c : gameStage.getGameCharacterList()) {
-            // direct body contact
             for (var e : enemiesSnap) {
                 if (c.getHitbox().intersects(e.getHitbox())) {
                     onPlayerHit(c);
                     return;
                 }
             }
-            // enemy bullet contact
             for (Bullet b : bulletsSnap) {
                 try {
                     if (b.isEnemyBullet() && c.getHitbox().intersects(b.getHitbox())) {
                         onPlayerHit(c);
-                        // remove bullet via GameStage (FX-safe / deferred)
                         PauseTransition delay = new PauseTransition(Duration.millis(10));
                         delay.setOnFinished(ev -> gameStage.removeBullet(b));
                         Platform.runLater(delay::play);
                         return;
                     }
-                } catch (NoSuchMethodError err) {
-                    // if isEnemyBullet() absent in some build, ignore gracefully
-                }
+                } catch (Throwable ignored) {}
             }
         }
     }
@@ -212,15 +175,24 @@ public class GameLoop implements Runnable {
         c.loseLife();
         Platform.runLater(() -> gameStage.updateLivesHUD(c.getLives()));
 
-        // Always respawn when hit
-        c.respawn();
-        // 1.5s invincibility frames
-        invincibleUntil = now + 1500;
-
-        if (c.getLives() <= 0) {
-            Platform.runLater(gameStage::showGameOverOverlay);
-            stop();
+        // Only respawn if still alive
+        if (c.getLives() > 0) {
+            c.respawn();
+            invincibleUntil = now + 1500; // 1.5s i-frames
+            return;
         }
+
+        // Lives <= 0 → freeze player & show overlay (FX first, then stop loop)
+        for (GameCharacter gc : gameStage.getGameCharacterList()) {
+            gc.setDisable(true);
+        }
+
+        Platform.runLater(gameStage::showGameOverOverlay);
+
+        // Give the FX thread a pulse to render overlay before stopping the loop
+        PauseTransition delayStop = new PauseTransition(Duration.millis(200));
+        delayStop.setOnFinished(e -> stop());
+        Platform.runLater(delayStop::play);
     }
 
     // ===================== MAIN LOOP =====================
@@ -234,8 +206,6 @@ public class GameLoop implements Runnable {
         }
 
         while (running) {
-
-            // If the scene is being rebuilt, do nothing this frame
             if (!gameStage.isWorldReady()) {
                 prevW = prevUp = prevSpace = false;
                 try { Thread.sleep(4); } catch (InterruptedException ignored) {}
@@ -247,20 +217,18 @@ public class GameLoop implements Runnable {
             double dtSec = (now - last) / 1_000_000_000.0;
             last = now;
 
-            // --- TICK SLOW-MO ONCE PER FRAME (SHIFT to engage "slowest") ---
             boolean wantSlow = gameStage.getKeys().isPressed(KeyCode.SHIFT);
             gameStage.tickSlowMo(wantSlow, dtSec);
 
-            // Updates
-            updateCharacters(gameStage.getGameCharacterList(), dtSec); // player at full speed
-            updateBullets(dtSec);                                      // split dt by ownership
-            updateEnemies(dtSec);                                      // enemies slowed
+            updateCharacters(gameStage.getGameCharacterList(), dtSec);
+            updateBullets(dtSec);
+            updateEnemies(dtSec);
             updateScore(gameStage.getGameCharacterList());
             checkCharacterEnemyCollisions();
 
             if (stageManager != null) stageManager.update();
 
-            javafx.application.Platform.runLater(() -> {
+            Platform.runLater(() -> {
                 try {
                     var gc = gameStage.getDebugGC();
                     gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);
