@@ -8,9 +8,13 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 
 import java.io.InputStream;
-import java.util.logging.Logger;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 
 public class Bullet {
+    private static final Logger LOG = LogManager.getLogger(Bullet.class);
     private double x, y;
     private double vx, vy;
     private double speed;
@@ -97,11 +101,11 @@ public class Bullet {
                     fallbackNode.relocate(x - (baseW * scale) / 2.0, y - (baseH * scale) / 2.0);
                 }
             } else {
-                Logger.getLogger(Bullet.class.getName()).warning("Bullet sprite not found: " + spritePath + "; using fallback.");
+                LOG.warn("Bullet sprite not found: {}; using fallback.", spritePath);
                 createFallbackNode();
             }
         } catch (Exception ex) {
-            Logger.getLogger(Bullet.class.getName()).severe("Error loading bullet sprite: " + ex);
+            LOG.error("Error loading bullet sprite", ex);
             createFallbackNode();
         }
     }

@@ -13,12 +13,17 @@ import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.stage.Stage;
 
-import java.util.logging.*;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.core.config.Configurator;
 
 /**
  * Entry point. Handles menu -> game session lifecycle, input wiring, and clean thread shutdown.
  */
 public class Launcher extends Application {
+
+    private static final Logger LOG = LogManager.getLogger(Launcher.class);
 
     private Stage primaryStage;
     private Thread gameThread, drawThread;
@@ -30,30 +35,11 @@ public class Launcher extends Application {
 
     // ---------- Logging ----------
     private static void setupLogging() {
-        // Prettier single-line formatter
-        System.setProperty("java.util.logging.SimpleFormatter.format",
-                "%1$tF %1$tT %4$s %3$s | %5$s%6$s%n");
-
-        Logger root = Logger.getLogger("");
-        boolean hasConsole = false;
-        for (Handler h : root.getHandlers()) {
-            if (h instanceof ConsoleHandler ch) {
-                hasConsole = true;
-                ch.setLevel(Level.ALL);
-                ch.setFormatter(new SimpleFormatter());
-            }
-        }
-        if (!hasConsole) {
-            ConsoleHandler ch = new ConsoleHandler();
-            ch.setLevel(Level.ALL);
-            ch.setFormatter(new SimpleFormatter());
-            root.addHandler(ch);
-        }
-
-        root.setLevel(Level.INFO);
-        Logger.getLogger(advpro_game.view.GameStage.class.getName()).setLevel(Level.INFO);
-        Logger.getLogger(advpro_game.model.GameCharacter.class.getName()).setLevel(Level.FINE);
-        // Logger.getLogger(advpro_game.controller.StageManager.class.getName()).setLevel(Level.INFO);
+        Configurator.setRootLevel(Level.INFO);
+        Configurator.setLevel("advpro_game.view.GameStage", Level.INFO);
+        Configurator.setLevel("advpro_game.model.GameCharacter", Level.TRACE);
+        Configurator.setLevel("advpro_game.controller.StageManager", Level.INFO);
+        LOG.debug("Logging configured");
     }
 
     @Override

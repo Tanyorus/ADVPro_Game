@@ -12,8 +12,19 @@
         <javafx.version>21.0.6</javafx.version>
         <junit.version>5.10.2</junit.version>
         <javafx.maven.plugin.version>0.0.8</javafx.maven.plugin.version>
+        <main.class>advpro_game.JarLauncher</main.class>
     </properties>
     <dependencies>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>2.23.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+            <version>2.23.1</version>
+        </dependency>
         <!--  JavaFX modules you use  -->
         <dependency>
             <groupId>org.openjfx</groupId>
@@ -74,10 +85,30 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>advpro_game.Launcher</mainClass>
+                            <addClasspath>true</addClasspath>
+                            <classpathPrefix>lib/</classpathPrefix>
+                            <mainClass>${main.class}</mainClass>
                         </manifest>
                     </archive>
                 </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.6.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-runtime-deps</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <includeScope>runtime</includeScope>
+                            <outputDirectory>${project.build.directory}/lib</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
             <!--  JavaFX plugin: run and jlink image  -->
             <plugin>

@@ -7,10 +7,11 @@ import javafx.application.Platform;
 import javafx.util.Duration;
 
 import java.util.ArrayList;
-import java.util.logging.Logger;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 public class StageManager {
-    private static final Logger LOG = Logger.getLogger(StageManager.class.getName());
+    private static final Logger LOG = LogManager.getLogger(StageManager.class);
 
     private final GameStage stage;
     private int currentStage = 1;

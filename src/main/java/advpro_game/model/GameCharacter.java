@@ -10,11 +10,18 @@ import javafx.scene.layout.Pane;
 import javafx.util.Duration;
 import java.util.function.Consumer;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import java.util.logging.Level;
+
 import advpro_game.Launcher;
 import advpro_game.view.GameStage;
 import advpro_game.audio.AudioManager;
 
 public class GameCharacter extends Pane {
+
+    private static final Logger LOG = LogManager.getLogger(GameCharacter.class);
+
 
     private Image characterImg;
     private AnimatedSprite imageView;
@@ -126,6 +133,20 @@ public class GameCharacter extends Pane {
         else javafx.application.Platform.runLater(r);
     }
 
+    private void logAction(String action) {
+        LOG.info(() -> String.format("Action[%s]: position=(%d,%d) velocity=(%d,%d) score=%d",
+                action, x, y, xVelocity, yVelocity, score));
+    }
+
+    private void logMovement(String detail) {
+        LOG.debug(() -> String.format("Movement[%s]: position=(%d,%d) velocity=(%d,%d)",
+                detail, x, y, xVelocity, yVelocity));
+    }
+
+    private void logScore(int delta) {
+        LOG.trace(() -> String.format("Score change %+d -> %d", delta, score));
+    }
+
     // -------------------- Constructor --------------------
     public GameCharacter(int id, int x, int y, String imgName,
                          int count, int column, int row, int width, int height,
@@ -167,12 +188,10 @@ public class GameCharacter extends Pane {
     }
 
     // ---------------- Movement & State ----------------
-    public void moveLeft()  { runFx(() -> setScaleX(-1)); isMoveLeft = true;  isMoveRight = false; isProne = false; setGroundAnim(AnimatedSprite.Action.run); }
-    public void moveRight() { runFx(() -> setScaleX(1));  isMoveLeft = false; isMoveRight = true;  isProne = false; setGroundAnim(AnimatedSprite.Action.run); }
-    public void stop()      { isMoveLeft = false; isMoveRight = false; if (!isJumping && !isFalling) { isProne = false; setGroundAnim(AnimatedSprite.Action.idle); } }
-    public void prone()     { isJumping = false; isMoveRight = false; isMoveLeft = false; isProne = true; setGroundAnim(AnimatedSprite.Action.prone); }
-
-    private AnimatedSprite.Action currentGroundAction = null;
+    public void moveLeft()  { runFx(() -> setScaleX(-1)); isMoveLeft = true;  isMoveRight = false; isProne = false; logAction("move-left"); setGroundAnim(AnimatedSprite.Action.run); }
+    public void moveRight() { runFx(() -> setScaleX(1));  isMoveLeft = false; isMoveRight = true;  isProne = false; logAction("move-right"); setGroundAnim(AnimatedSprite.Action.run); }
+    public void stop()      { isMoveLeft = false; isMoveRight = false; if (!isJumping && !isFalling) { isProne = false; setGroundAnim(AnimatedSprite.Action.idle); } logAction("stop"); }
+    public void prone()     { isJumping = false; isMoveRight = false; isMoveLeft = false; isProne = true; logAction("prone"); setGroundAnim(AnimatedSprite.Action.prone); }    private AnimatedSprite.Action currentGroundAction = null;
     private void setGroundAnim(AnimatedSprite.Action a) {
         if (isInShootPose() || isRunShootActive()) return;
 
@@ -185,14 +204,24 @@ public class GameCharacter extends Pane {
     }
 
     private void stepHorizontal() {
+        int beforeX = x;
         if (isMoveLeft)  { xVelocity = Math.min(xMaxVelocity, xVelocity + xAcceleration); x -= xVelocity; }
         if (isMoveRight) { xVelocity = Math.min(xMaxVelocity, xVelocity + xAcceleration); x += xVelocity; }
         if (!isMoveLeft && !isMoveRight) xVelocity = 0;
         clampToWalls();
+        if (x != beforeX) {
+            String direction = (x > beforeX) ? "right" : "left";
+            logMovement("horizontal-" + direction);
+        }
     }
     private void stepVertical() {
+        int beforeY = y;
         if (isFalling)       { yVelocity = Math.min(yMaxVelocity, yVelocity + yAcceleration); y += yVelocity; }
         else if (isJumping)  { yVelocity = Math.max(0, yVelocity - yAcceleration); y -= yVelocity; }
+        if (y != beforeY) {
+            String direction = (y > beforeY) ? "down" : "up";
+            logMovement("vertical-" + direction);
+        }
     }
     private void clampToWalls() {
         if (x < 0) x = 0;
@@ -211,13 +240,12 @@ public class GameCharacter extends Pane {
             // vertical boost
             yVelocity = yMaxVelocity;
 
+            logAction("jump");
+
             // add a small horizontal boost if walking
             if (isMoveLeft) {
                 xVelocity = Math.min(xMaxVelocity, xVelocity + xAcceleration);
                 x -= (int) (xVelocity * 0.8);
-            } else if (isMoveRight) {
-                xVelocity = Math.min(xMaxVelocity, xVelocity + xAcceleration);
-                x += (int) (xVelocity * 0.8);
             }
 
             clampToWalls();
@@ -232,6 +260,7 @@ public class GameCharacter extends Pane {
             yVelocity = yMaxVelocity; xVelocity = xMaxVelocity; canJump = false; isJumping = true; isFalling = false; isProne = false;
             x += (int) (direction * xVelocity * 1.2);
             clampToWalls();
+            logAction("jump-forward" + (direction > 0 ? "-right" : "-left"));
             runFx(() -> { setScaleX(direction); imageView.setAction(AnimatedSprite.Action.jump); });
             currentGroundAction = AnimatedSprite.Action.jump;
         }
@@ -451,6 +480,8 @@ public class GameCharacter extends Pane {
         AnimatedSprite.Action anim = chooseShootAnim(null);
         playShootPoseAndRecoil(facing, anim);
 
+        logAction("shoot");
+
         // Horizontal bullet (legacy)
         Bullet b = new Bullet(mx, my, facing, 0, 480.0, 1, 1.6, false);
         if (bulletSink != null) bulletSink.accept(b);
@@ -476,10 +507,13 @@ public class GameCharacter extends Pane {
         AnimatedSprite.Action anim = chooseShootAnim(null);
         playShootPoseAndRecoil(facing, anim);
 
+        logAction("shoot");
+
         Bullet bullet = new Bullet(s.x, s.y, s.dx, s.dy, 480.0, 1, 1.6, false);
         if (bulletSink != null) bulletSink.accept(bullet);
         return bullet;
     }
+
 
     // Angle-aware version used by GameLoop. aimDeg is snapped to {-45, 0, +45}.
     public Bullet tryCreateBullet(Keys keys, Double aimDegOpt) {
@@ -519,6 +553,8 @@ public class GameCharacter extends Pane {
         int facing = getFacingDir();
         AnimatedSprite.Action anim = chooseShootAnim(aimDegOpt);
         playShootPoseAndRecoil(facing, anim);
+
+        logAction("shoot");
 
         Bullet bullet = new Bullet(mx, my, dirX, dirY, 480.0, 1, 1.6, false);
         if (bulletSink != null) bulletSink.accept(bullet);
@@ -578,7 +614,10 @@ public class GameCharacter extends Pane {
     }
 
     // -------- scoring & lives --------
-    public void addScore(int delta){ this.score += delta; }
+    public void addScore(int delta){
+        this.score += delta;
+        logScore(delta);
+    }
     public int getLives() { return lives; }
     public void setLives(int lives) { this.lives = Math.max(0, lives); }
     public void loseLife() { if (lives > 0) lives--; }
