@@ -26,6 +26,9 @@ public class Enemy extends Pane {
     protected int    shootCooldownMs = 2000;  // 2s
     protected double shootRange      = 400.0; // px
 
+    // *** NEW: force non-Java enemies to use a neutral bullet sprite ***
+    protected static final String DEFAULT_ENEMY_BULLET_PATH = "/advpro_game/assets/Bullet.png";
+
     /** Sprite-enabled constructor (falls back to rectangle if sprite not available). */
     public Enemy(double x, double y, double w, double h,
                  String spritePath, int frameCount, int columns, int rows,
@@ -154,7 +157,17 @@ public class Enemy extends Pane {
         double bulletX = x + w / 2.0;
         double bulletY = y + h / 2.0;
 
-        return new Bullet(bulletX, bulletY, dx, dy, 300.0, 1, 1.6, true);
+        // *** CRITICAL: Always use the neutral enemy bullet for base Enemy ***
+        // This prevents java_bullet.png from ever leaking into regular enemies.
+        return new Bullet(
+                bulletX, bulletY,
+                dx, dy,
+                280.0,                // speed
+                1,                    // damage
+                1.4,                  // render scale
+                /*isEnemyBullet*/ true,
+                DEFAULT_ENEMY_BULLET_PATH // explicit neutral sprite
+        );
     }
 
     // -------------------- Renamed logical size getters --------------------
@@ -166,10 +179,9 @@ public class Enemy extends Pane {
     public void setShootCooldownMs(int ms)    { this.shootCooldownMs = ms; }
     public void setShootRange(double px)      { this.shootRange = px; }
 
-   //-------getter-----------
+    //-------getter-----------
     public double getX()    { return x; }
     public double getY()    { return y; }
     public double getPosX() { return x; } // optional aliases
     public double getPosY() { return y; }
-
 }

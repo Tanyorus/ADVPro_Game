@@ -6,6 +6,7 @@ import advpro_game.model.*;
 import advpro_game.model.Platform;
 
 import javafx.geometry.Pos;
+import javafx.scene.Group;
 import javafx.scene.canvas.GraphicsContext;
 import javafx.scene.effect.DropShadow;
 import javafx.scene.image.Image;
@@ -21,6 +22,7 @@ import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.logging.Level;
 
 public class GameStage extends Pane {
     // ---- Dimensions / ground ----
@@ -28,15 +30,14 @@ public class GameStage extends Pane {
     public static final int HEIGHT = 400;
     public static final int GROUND = 350; // unified ground level
 
-    // --- Stable render root: sprite always at index 0; effects stacked above it ---
-    private final javafx.scene.Group spriteRoot = new javafx.scene.Group();
-    private final javafx.scene.image.ImageView sprite = new javafx.scene.image.ImageView();
-
     // Mouse tracking for snapped aim
     private volatile double mouseX = WIDTH * 0.5, mouseY = HEIGHT * 0.5;
     public double getMouseX() { return mouseX; }
     public double getMouseY() { return mouseY; }
 
+
+    private javafx.scene.Node activeUltNode = null;
+    // If StageManager fails to spawn, fallback to default minions
     private boolean autoFallbackToSafetyMinions = true;
 
     // -------- Deferred scene-graph mutations while worldReady == false --------
@@ -44,7 +45,7 @@ public class GameStage extends Pane {
     private void runOrDefer(Runnable r) {
         if (r == null) return;
         if (worldReady) {
-            Ui.later(r); // ALWAYS defer to next pulse to avoid layout-time mutations
+            Ui.later(r); // ALWAYS next pulse to avoid layout-time mutations
         } else {
             synchronized (deferredOps) { deferredOps.add(r); }
         }
@@ -62,30 +63,21 @@ public class GameStage extends Pane {
     /** Re-enable world mutations now and flush any deferred ops safely. */
     private void rearmWorldReadySoon() {
         worldReady = true; // mark unlocked
-
-        java.util.List<Runnable> toRun;
-        synchronized (deferredOps) {
-            toRun = new java.util.ArrayList<>(deferredOps);
-            deferredOps.clear();
-        }
-        for (Runnable op : toRun) {
-            try { Ui.later(op); } catch (Throwable t) { t.printStackTrace(); }
-        }
+        flushDeferredOps();
     }
 
-    // ---- Layers (fixed order; never replace setAll to avoid index crashes) ----
-    private final Pane backgroundLayer = new Pane();
-    private final Pane worldLayer      = new Pane();   // player / static world
-    private final Pane enemyLayer      = new Pane();   // enemies (volatile)
-    private final Pane bulletLayer     = new Pane();   // bullets (volatile)
-    private final Pane hudLayer        = new Pane();   // HUD
-    private final Pane overlayLayer    = new Pane();   // overlays (modal)
+    // ---- Layers (use Group to avoid Region layout churn) ----
+    private final Group backgroundLayer = new Group();
+    private final Group worldLayer      = new Group();   // player / static world
+    private final Group enemyLayer      = new Group();   // enemies (volatile)
+    private final Group bulletLayer     = new Group();   // bullets (volatile)
+    private final Pane  hudLayer        = new Pane();    // HUD (needs layout)
+    private final Group overlayLayer    = new Group();   // overlays (modal)
     private final javafx.scene.canvas.Canvas debugCanvas =
             new javafx.scene.canvas.Canvas(WIDTH, HEIGHT);
 
-    // --- detach/attach guards for volatile layers (SAFE, index-free) ---
+    // --- detach/attach guards for volatile layers (index-free) ---
     private boolean volatileLayersAttached = true;
-
     private void detachVolatileLayers() {
         Ui.later(() -> {
             if (!volatileLayersAttached) return;
@@ -94,7 +86,6 @@ public class GameStage extends Pane {
             volatileLayersAttached = false;
         });
     }
-
     private void attachVolatileLayers() {
         Ui.later(() -> {
             if (volatileLayersAttached) return;
@@ -144,8 +135,16 @@ public class GameStage extends Pane {
     public int getCurrentStage() { return currentStage; }
 
     // ---- Base input handlers (restorable after overlays) ----
+    // (PATCHED) E key triggers ultimate laser here
     private final javafx.event.EventHandler<javafx.scene.input.KeyEvent> baseKeyPressed =
-            e -> { keys.add(e.getCode()); };
+            e -> {
+                keys.add(e.getCode());
+                if (e.getCode() == KeyCode.E) {
+                    GameCharacter hero = getPlayer();
+                    if (hero != null) triggerUltimateFrom(hero);
+                    e.consume();
+                }
+            };
     private final javafx.event.EventHandler<javafx.scene.input.KeyEvent> baseKeyReleased =
             e -> { keys.remove(e.getCode()); };
     private final javafx.event.EventHandler<javafx.scene.input.MouseEvent> baseMousePressed =
@@ -161,13 +160,13 @@ public class GameStage extends Pane {
 
     // ---- Slow-time ----
     private double slowMoEnergy            = 1.0;  // 0..1
-    private final double slowMoDrainRate   = 0.35; // per second
+    private final double slowMoDrainRate   = 0.55; // per second
     private final double slowMoRechargeRate= 0.20; // per second
-    private final double slowMoScale       = 0.55; // active time scale
+    private final double slowMoScale       = 0.25; // active time scale
     private boolean slowMoActive           = false;
 
     // ---- Win/overlay guards ----
-    private javafx.scene.Group gameClearOverlay = null;
+    private Group gameClearOverlay = null;
     private boolean gameClearShown    = false; // prevent dup overlay
     private boolean winCheckEnabled   = true;  // disarm while resetting
     private boolean victoryShown      = false; // for shouldShowVictory()
@@ -181,12 +180,10 @@ public class GameStage extends Pane {
 
     // Optional link to controller (used for respawns on retry)
     private advpro_game.controller.StageManager stageManager;
-
     public void setStageManager(advpro_game.controller.StageManager m) {
         this.stageManager = m;
         if (m == null) return;
-
-        // Try to call StageManager#setGameStage(GameStage) *if it exists*.
+        // Try StageManager#setGameStage(GameStage) *if it exists*.
         try {
             java.lang.reflect.Method attach =
                     m.getClass().getMethod("setGameStage", advpro_game.view.GameStage.class);
@@ -205,20 +202,12 @@ public class GameStage extends Pane {
             java.util.logging.Logger.getLogger(GameStage.class.getName());
 
     public GameStage() {
-
-        // Attach once; never remove this group
-        getChildren().add(spriteRoot);
-
-    // Sprite (index 0) — your AnimatedSprite code should UPDATE this ImageView,
-    // not replace nodes. Keep attachments stable.
-        sprite.setSmooth(true);
-        sprite.setCache(true);
-
-        // Size/anchor if you use them elsewhere
-        // sprite.setFitWidth(...); sprite.setFitHeight(...); sprite.setPreserveRatio(false);
-
-    // Put the sprite in the root as the first child
-        spriteRoot.getChildren().setAll(sprite);
+        // Make noninteractive layers not participate in picking; avoids deep pick walks.
+        backgroundLayer.setPickOnBounds(false);
+        worldLayer.setPickOnBounds(false);
+        enemyLayer.setPickOnBounds(false);
+        bulletLayer.setPickOnBounds(false);
+        overlayLayer.setPickOnBounds(false);
 
         // ---- Background (safe init) ----
         try (InputStream s = Launcher.class.getResourceAsStream("/advpro_game/assets/Stage1.png")) {
@@ -233,12 +222,12 @@ public class GameStage extends Pane {
         if (backgroundImg != null) bgIV.setImage(backgroundImg);
         backgroundLayer.getChildren().add(bgIV);
 
-        // ---- Clips & transparency ----
-        worldLayer.setClip(new Rectangle(WIDTH, HEIGHT));
-        enemyLayer.setClip(new Rectangle(WIDTH, HEIGHT));
-        bulletLayer.setClip(new Rectangle(WIDTH, HEIGHT));
+        // ---- Mouse transparency on layers ----
         backgroundLayer.setMouseTransparent(true);
-        overlayLayer.setMouseTransparent(true);
+        worldLayer.setMouseTransparent(false);
+        enemyLayer.setMouseTransparent(true);
+        bulletLayer.setMouseTransparent(true);
+        overlayLayer.setMouseTransparent(true); // will be disabled when showing overlay
         debugCanvas.setMouseTransparent(true);
 
         // ---- Add layers (once) ----
@@ -280,7 +269,8 @@ public class GameStage extends Pane {
         hudLayer.getChildren().addAll(s1, livesBox, slowBg, slowFill);
 
         // ---- First stage ----
-        setStage(1);
+        // Defer one pulse to ensure the node is in a Scene before heavy work (prevents Scene sync NPEs)
+        javafx.application.Platform.runLater(() -> setStage(1));
 
         // ---- Input (base handlers) ----
         setFocusTraversable(true);
@@ -337,7 +327,7 @@ public class GameStage extends Pane {
         generation++; // invalidate any stale timers from prior stage
         final int token = generation; // capture for timers to guard late-firing
 
-        // >>> CRITICAL: play this drain pulse so the rest of the logic actually runs
+        // >>> CRITICAL: let one pulse pass so clears happen before rebuild
         javafx.animation.PauseTransition drain =
                 new javafx.animation.PauseTransition(javafx.util.Duration.millis(16));
 
@@ -350,7 +340,7 @@ public class GameStage extends Pane {
             gameClearShown = false;
             winCheckEnabled = true;
 
-            // clear visuals (FX thread) on DETACHED layers
+            // clear visuals on detached layers
             Ui.safeClear(enemyLayer);
             Ui.safeClear(bulletLayer);
 
@@ -557,10 +547,15 @@ public class GameStage extends Pane {
             slowMoActive = false;
             slowMoEnergy += slowMoRechargeRate * dtSeconds;
         }
-        slowMoEnergy = Math.max(0.0, Math.min(1.0, slowMoEnergy));
+        if (slowMoEnergy < 0.0) { slowMoEnergy = 0.0; slowMoActive = false; }
+        if (slowMoEnergy > 1.0)  slowMoEnergy = 1.0;
+
         Ui.later(() -> slowFill.setWidth(slowBg.getWidth() * slowMoEnergy));
     }
+
+    /** Time scale for enemies & enemy bullets only. Player logic ignores this. */
     public double getTimeScale() { return slowMoActive ? slowMoScale : 1.0; }
+
 
     // =================== HUD ===================
     public void updateLivesHUD(int lives) {
@@ -603,7 +598,7 @@ public class GameStage extends Pane {
     }
     public Keys getKeys() { return keys; }
     public MouseButton getMouseButton() { return mouseButton; } // compat
-    public Pane getDBoverlay() { return overlayLayer; } // compat with older code
+    public Pane getDBoverlay() { return hudLayer; } // kept for compat if used
 
     // For GameLoop victory gating
     public boolean shouldShowVictory() { return !victoryShown && hadEnemiesThisStage && enemies.isEmpty(); }
@@ -622,6 +617,13 @@ public class GameStage extends Pane {
                 System.err.println("WARN addBullet: " + t);
             }
         };
+        if (LOG.isLoggable(Level.FINE)) {
+            try {
+                GameCharacter p = getPlayer();
+                LOG.fine("[Stage] bullet +1 from " + (p != null ? p.getClass().getSimpleName() : "unknown")
+                        + " angle=" + String.format("%.1f", (p != null ? getSnappedAimAngleDeg(p) : 0.0)));
+            } catch (Throwable ignored) {}
+        }
         runOrDefer(addVisual);
     }
 
@@ -642,6 +644,26 @@ public class GameStage extends Pane {
 
     public void addEnemy(Enemy e) {
         if (e == null) return;
+
+        // --- Gate Java-bullet usage to Stage-2 Java boss only ---
+        // If this enemy is a Boss and bossType != 2, force-clear any custom bullet
+        try {
+            if (e instanceof Boss b) {
+                try {
+                    int t = b.getBossType();   // requires Boss#getBossType()
+                    if (t != 2) {
+                        try { b.setBulletConfig(null); } catch (Throwable ignored) {}
+                    }
+                } catch (Throwable noGetter) {
+                    // If getBossType() isn’t available, best-effort: clear config anyway
+                    try { b.setBulletConfig(null); } catch (Throwable ignored) {}
+                }
+            }
+        } catch (Throwable ignored) {
+            // Never let visuals break if reflection/typing fails
+        }
+        // ---------------------------------------------------------
+
         if (!enemies.contains(e)) enemies.add(e);
         hadEnemiesThisStage = true;
 
@@ -659,6 +681,7 @@ public class GameStage extends Pane {
 
         runOrDefer(addVisual);
     }
+
 
     public void removeEnemy(Enemy e) {
         if (e == null) return;
@@ -687,6 +710,11 @@ public class GameStage extends Pane {
                     try {
                         if (b.getHitbox().intersects(e.getHitbox())) {
                             e.hit(1);
+                            GameCharacter p = getPlayer();
+                            if (p != null) {
+                                int pts = 10; // tweak or make e.scoreOnHit()
+                                p.addScoreLogged(pts, "hit " + e.getClass().getSimpleName());
+                            }
                             it.remove();
                             Ui.safeRemove(bulletLayer, b.getNode());
                             break;
@@ -709,6 +737,10 @@ public class GameStage extends Pane {
         // players
         for (GameCharacter c : new ArrayList<>(gameCharacterList)) {
             try {
+                // propagate slow-mo to sprite framerate (if AnimatedSprite supports it)
+                if (c.getImageView() != null) {
+                    try { c.getImageView().setTimeScale(getTimeScale()); } catch (Throwable ignored) {}
+                }
                 c.repaint(dtSec);
                 c.checkPlatformCollision(platforms);
                 c.checkReachHighest();
@@ -755,7 +787,6 @@ public class GameStage extends Pane {
                     WIDTH, HEIGHT
             );
             overlayLayer.getChildren().add(overlay);
-            // no toFront(); viewOrder controls z-order
         });
     }
 
@@ -769,7 +800,7 @@ public class GameStage extends Pane {
     private void showGameClearOverlay() {
         Ui.later(() -> {
             overlayLayer.getChildren().remove(gameClearOverlay);
-            gameClearOverlay = new javafx.scene.Group();
+            gameClearOverlay = new Group();
 
             var dim = new javafx.scene.shape.Rectangle(WIDTH, HEIGHT);
             dim.setFill(javafx.scene.paint.Color.color(0, 0, 0, 0.6));
@@ -915,7 +946,7 @@ public class GameStage extends Pane {
             // rebuild same stage
             setStage(currentStage);
 
-            // ask StageManager to re-spawn minions (if available)
+            // ask StageManager to re-spawn (if available)
             if (stageManager != null) {
                 try {
                     stageManager.spawnEnemiesForStage(currentStage);
@@ -946,45 +977,56 @@ public class GameStage extends Pane {
         public static void later(Runnable r) {
             if (r != null) javafx.application.Platform.runLater(r);
         }
-
-        /** Keep for compatibility; just delegates. */
         public static void runFx(Runnable r) { later(r); }
 
-        /** Add child safely (ignore nulls, avoid duplicates, next pulse). */
-        public static void safeAdd(Pane parent, javafx.scene.Node n) {
-            if (parent == null || n == null) {
-                if (n == null) LOG.warning("safeAdd: attempted to add null Node");
-                return;
-            }
+        // ---- Overloads for Group and Pane (no index math anywhere) ----
+        public static void safeAdd(Group parent, javafx.scene.Node n) {
+            if (parent == null || n == null) { if (n == null) LOG.warning("safeAdd: null Node"); return; }
             later(() -> {
                 try {
                     var kids = parent.getChildren();
                     if (!kids.contains(n)) kids.add(n);
-                } catch (Throwable t) {
-                    LOG.warning("safeAdd failed: " + t);
-                }
+                } catch (Throwable t) { LOG.warning("safeAdd(Group) failed: " + t); }
+            });
+        }
+        public static void safeRemove(Group parent, javafx.scene.Node n) {
+            if (parent == null || n == null) return;
+            later(() -> {
+                try { parent.getChildren().remove(n); }
+                catch (Throwable t) { LOG.warning("safeRemove(Group) failed: " + t); }
+            });
+        }
+        public static void safeClear(Group parent) {
+            if (parent == null) return;
+            later(() -> {
+                try { parent.getChildren().clear(); }
+                catch (Throwable t) { LOG.warning("safeClear(Group) failed: " + t); }
             });
         }
 
-        /** Remove child safely (ignore nulls, next pulse). */
+        public static void safeAdd(Pane parent, javafx.scene.Node n) {
+            if (parent == null || n == null) { if (n == null) LOG.warning("safeAdd: null Node"); return; }
+            later(() -> {
+                try {
+                    var kids = parent.getChildren();
+                    if (!kids.contains(n)) kids.add(n);
+                } catch (Throwable t) { LOG.warning("safeAdd(Pane) failed: " + t); }
+            });
+        }
         public static void safeRemove(Pane parent, javafx.scene.Node n) {
             if (parent == null || n == null) return;
             later(() -> {
                 try { parent.getChildren().remove(n); }
-                catch (Throwable t) { LOG.warning("safeRemove failed: " + t); }
+                catch (Throwable t) { LOG.warning("safeRemove(Pane) failed: " + t); }
             });
         }
-
-        /** Clear children safely (next pulse). */
         public static void safeClear(Pane parent) {
             if (parent == null) return;
             later(() -> {
                 try { parent.getChildren().clear(); }
-                catch (Throwable t) { LOG.warning("safeClear failed: " + t); }
+                catch (Throwable t) { LOG.warning("safeClear(Pane) failed: " + t); }
             });
         }
-
-        /** Replace children content robustly (filters nulls, next pulse). */
         public static void safeReplaceChildren(Pane parent, java.util.Collection<? extends javafx.scene.Node> items) {
             if (parent == null) return;
             later(() -> {
@@ -999,7 +1041,19 @@ public class GameStage extends Pane {
             });
         }
     }
-
+    private static boolean isEnemyBulletSafe(Bullet b) {
+        if (b == null) return false;
+        try {
+            // Your Bullet has a ctor ... , ..., boolean isEnemy
+            // and typically exposes a getter; be tolerant if signature differs.
+            return b.isEnemyBullet();
+        } catch (Throwable ignored) {
+            // Fallbacks if older Bullet API:
+            try { return (boolean) b.getClass().getMethod("isEnemyBullet").invoke(b); }
+            catch (Throwable __) { /* last resort: assume player bullet */ }
+        }
+        return false;
+    }
 
     private void clearPressedInputs() {
         try { keys.clear(); } catch (Throwable ignored) {}
@@ -1024,7 +1078,7 @@ public class GameStage extends Pane {
         return 0.0;                      // straight
     }
 
-    // --- PATCH: Robust enemy visibility checks ---
+    // --- Robust enemy visibility checks ---
     private boolean noEnemiesVisible() {
         boolean noneInList  = (enemies == null || enemies.isEmpty());
         boolean noneInLayer = (enemyLayer == null || enemyLayer.getChildren().isEmpty());
@@ -1055,7 +1109,7 @@ public class GameStage extends Pane {
         LOG.info("Spawn delta -> list: " + beforeCount + "→" + afterCount +
                 ", nodes: " + beforeNodes + "→" + afterNodes + " (changed=" + changed + ")");
 
-        // 🔁 Guaranteed fallback: if nothing appeared, inject default minions now.
+        // Guaranteed fallback: if nothing appeared, inject default minions now.
         if (!changed && (autoFallbackToSafetyMinions || allowSafetyMinions) && noEnemiesVisible()) {
             try {
                 spawnDefaultMinionsFor(stage);
@@ -1072,5 +1126,94 @@ public class GameStage extends Pane {
         }
 
         return changed;
+    }
+
+
+    // === ULT LASER FX ===
+    public void spawnUltimateLaser(advpro_game.model.LaserBeamUltimate fx) {
+        // Remove any previous beam first
+        if (activeUltNode != null) {
+            Ui.safeRemove(bulletLayer, activeUltNode);
+            activeUltNode = null;
+        }
+
+        // Host pane (because playOnce expects Pane, but bulletLayer is a Group)
+        javafx.scene.layout.Pane host = new javafx.scene.layout.Pane();
+        host.setPickOnBounds(false);
+        host.setMouseTransparent(true);
+        bulletLayer.getChildren().add(host);
+
+        // Play once; remember the node so we can kill it next time
+        fx.playOnce(host);
+        activeUltNode = fx.getNode();
+
+        // Cleanup host automatically after a short delay if it’s empty
+        var cleanup = new javafx.animation.PauseTransition(javafx.util.Duration.seconds(1.0));
+        cleanup.setOnFinished(ev -> {
+            if (host.getChildren().isEmpty()) bulletLayer.getChildren().remove(host);
+            // If animation already removed the node, clear the pointer
+            if (activeUltNode != null && !host.getChildren().contains(activeUltNode)) {
+                activeUltNode = null;
+            }
+        });
+        cleanup.play();
+    }
+
+
+    /** Best-effort removal of an enemy from scene + internal lists. */
+    public void removeEnemyIfPresent(Enemy e) {
+        try {
+            if (e == null) return;
+
+            // Remove from visual layers if present
+            try {
+                if (enemyLayer.getChildren().contains(e)) enemyLayer.getChildren().remove(e);
+            } catch (Throwable ignore) { }
+            try {
+                getChildren().remove(e); // just in case it was added directly to this Pane
+            } catch (Throwable ignore) { }
+
+            // Remove from logical list
+            try {
+                enemies.remove(e);
+            } catch (Throwable ignore) { }
+
+            // Hide as a final safeguard
+            try {
+                e.setVisible(false);
+            } catch (Throwable ignore) { }
+        } catch (Throwable ignoreOuter) { }
+    }
+
+
+    // ======== PATCH: fire ultimate laser from player and wipe all enemies ========
+    /** Fire the ultimate laser from the player's muzzle and wipe all enemies. */
+    private void triggerUltimateFrom(GameCharacter hero) {
+        try {
+            int dir;
+            try { dir = hero.getFacingDir(); }
+            catch (Throwable ignored) { dir = (hero.getScaleX() >= 0) ? 1 : -1; }
+
+            // Muzzle offsets — tweak if needed to line up with your sprite
+            double muzzleX = hero.getTranslateX() + (dir > 0 ? 62 : 4);
+            double muzzleY = hero.getTranslateY() + 34;
+
+            // Visual FX (optional if LaserBeamUltimate exists)
+            try {
+                advpro_game.model.LaserBeamUltimate fx =
+                        new advpro_game.model.LaserBeamUltimate(muzzleX, muzzleY, dir, 1.0);
+                spawnUltimateLaser(fx);
+            } catch (Throwable vizErr) {
+                LOG.fine("Ultimate FX unavailable: " + vizErr);
+            }
+
+            // Wipe: remove all enemies immediately
+            for (Enemy e : new java.util.ArrayList<>(enemies)) {
+                try { removeEnemy(e); }
+                catch (Throwable fall) { removeEnemyIfPresent(e); }
+            }
+        } catch (Throwable t) {
+            LOG.warning("triggerUltimateFrom failed: " + t);
+        }
     }
 }

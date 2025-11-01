@@ -57,4 +57,25 @@ public class Minion extends Enemy {
         }
         return dead;
     }
+    // Minion.java
+    @Override
+    public Bullet tryShoot(GameCharacter player) {
+        long now = System.currentTimeMillis();
+        if (now - lastShotTime < shootCooldownMs) return null;
+
+        double dx = player.getX() - x;
+        double dy = player.getY() - y;
+        double distance = Math.hypot(dx, dy);
+        if (distance > shootRange) return null;
+
+        lastShotTime = now;
+
+        double bulletX = x + w / 2.0;
+        double bulletY = y + h / 2.0;
+
+        // Plain bullet ONLY (never java_bullet)
+        return new Bullet(bulletX, bulletY, dx, dy, 260.0, 1, 1.3, true);
+    }
+
+
 }

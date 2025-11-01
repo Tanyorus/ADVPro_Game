@@ -1,39 +1,39 @@
 package advpro_game.model;
 
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.application.Platform;
+import javafx.geometry.Rectangle2D;
 import javafx.scene.paint.Color;
+import javafx.util.Duration;
 
-/**
- * Boss enemy:
- * - Extends merged Enemy (Pane node with optional sprite, rectangle fallback).
- * - Per-type animations; stationary turret-like by default.
- * - Short i-frames after being hit.
- * - Optional custom bullet visuals via BulletConfig (metadata only; Bullet creation uses core ctor).
- */
+import java.util.logging.Logger;
+
 public class Boss extends Enemy {
-    private static final int  BASE_HP        = 12;
+    private static final Logger LOG = Logger.getLogger(Boss.class.getName());
 
-    // i-frames (to avoid stacked damage in the same few ticks)
-    private static final long INVINCIBLE_MS  = 220;
+    private static final int  BASE_HP       = 12;
+    private static final long INVINCIBLE_MS = 220;
+    private static final String JAVA_BULLET_PATH = "/advpro_game/assets/java_bullet.png";
+
     private long lastHitAt = 0L;
+
+    // --- Simple Java-boss mouth anim (your sheet has 3 frames on one row) ---
+    private Timeline mouthTl;
+    private static final int SHOOT_DELAY_MS = 120; // per mouth frame (col0 then col1)
 
     private final int bossType;
     private BulletConfig bulletConfig = null;
 
-    // ---------- Constructors ----------
-
-    /** Backward-compat: default sprite + bossType=1. */
     public Boss(double x, double y) {
         this(x, y, 48, 72,
+                // NOTE: for the Java boss (type 2) make sure you pass the correct sheet path
+                // e.g. "/advpro_game/assets/bossjava.png" when constructing this boss.
                 "/advpro_game/assets/BossSprite.png",
                 8, 8, 1, 48, 72,
                 1);
     }
 
-    /**
-     * Full custom sprite parameters + boss type.
-     * If sprite path fails to load, will fall back to a colored rectangle.
-     */
     public Boss(double x, double y, double w, double h, String spritePath,
                 int frameCount, int columns, int rows, int frameWidth, int frameHeight,
                 int bossType) {
@@ -42,43 +42,46 @@ public class Boss extends Enemy {
         this.bossType = bossType;
         setHp(BASE_HP);
 
-        // Boss: stationary shooter by default
         this.moveSpeed       = 0;
         this.shootCooldownMs = 1000;
         this.shootRange      = 600;
 
-        // Desynchronize shooting a bit
         this.lastShotTime = System.currentTimeMillis() - (long)(Math.random() * this.shootCooldownMs);
 
-        // Fallback rectangle tint (FX thread safe)
         if (fallback != null) {
             Platform.runLater(() -> fallback.setFill(getBossBaseColor()));
         }
-
-        // Define animations per-type when sprite is available
         if (sprite != null) {
             defineAnimationsForBossType();
         }
     }
 
-    // ---------- Bullet customization ----------
-
-    /** Static bullet sprite metadata (scale used to adjust radius). */
+    // ---------- Bullet customization (guard java_bullet for non-type-2) ----------
     public void setCustomBullet(String spritePath, double scale) {
+        if (spritePath != null && spritePath.equals(JAVA_BULLET_PATH) && bossType != 2) {
+            LOG.fine("Ignoring java_bullet on non-type-2 boss.");
+            return;
+        }
         this.bulletConfig = new BulletConfig(spritePath, scale);
     }
 
-    /** Animated bullet sprite metadata (stored; Bullet still created via core ctor). */
     public void setCustomAnimatedBullet(String spritePath, double scale, int frameCount,
                                         int columns, int rows, int frameWidth, int frameHeight) {
+        if (spritePath != null && spritePath.equals(JAVA_BULLET_PATH) && bossType != 2) {
+            LOG.fine("Ignoring animated java_bullet on non-type-2 boss.");
+            return;
+        }
         this.bulletConfig = new BulletConfig(spritePath, scale, frameCount, columns, rows, frameWidth, frameHeight);
     }
 
     public void setBulletConfig(BulletConfig config) {
+        if (config != null && config.spritePath != null
+                && config.spritePath.equals(JAVA_BULLET_PATH) && bossType != 2) {
+            LOG.fine("Ignoring bulletConfig with java_bullet on non-type-2 boss.");
+            return;
+        }
         this.bulletConfig = config;
     }
-
-    // ---------- Visual helpers ----------
 
     private Color getBossBaseColor() {
         return switch (bossType) {
@@ -89,79 +92,91 @@ public class Boss extends Enemy {
         };
     }
 
+    // Map actions for non-Java bosses as before; for Java boss we’ll drive the viewport manually.
     private void defineAnimationsForBossType() {
         switch (bossType) {
-            case 1 -> {
-                // Example: use javaShoot row 2, 2 frames
-                sprite.define(AnimatedSprite.Action.javaShoot, new AnimatedSprite.ActionSpec(
-                        0, 2, 2, 2, (int)w, (int)h, 180
-                ));
-                sprite.define(AnimatedSprite.Action.idle, new AnimatedSprite.ActionSpec(
-                        0, 0, 4, 8, (int)w, (int)h, 150
-                ));
+            case 2: {
+                sprite.define(AnimatedSprite.Action.idle,
+                        new AnimatedSprite.ActionSpec(0, 0, 1, 3, (int) w, (int) h, 150));
+                // shooting animation is driven by viewport flips
+                break;
             }
-            case 2 -> {
-                // Very slow “charging” javaShoot
-                sprite.define(AnimatedSprite.Action.javaShoot, new AnimatedSprite.ActionSpec(
-                        0, 2, 2, 2, (int)w, (int)h, 99999999
-                ));
-                sprite.define(AnimatedSprite.Action.idle, new AnimatedSprite.ActionSpec(
-                        0, 0, 4, 8, (int)w, (int)h, 180
-                ));
+            case 1: {
+                sprite.define(AnimatedSprite.Action.javaShoot,
+                        new AnimatedSprite.ActionSpec(0, 2, 2, 2, (int) w, (int) h, 180));
+                sprite.define(AnimatedSprite.Action.idle,
+                        new AnimatedSprite.ActionSpec(0, 0, 4, 8, (int) w, (int) h, 150));
+                break;
             }
-            case 3 -> {
-                // Idle + shoot split across columns
-                sprite.define(AnimatedSprite.Action.idle, new AnimatedSprite.ActionSpec(
-                        0, 0, 4, 8, (int)w, (int)h, 150
-                ));
-                sprite.define(AnimatedSprite.Action.shoot, new AnimatedSprite.ActionSpec(
-                        4, 0, 4, 8, (int)w, (int)h, 80
-                ));
+            case 3: {
+                sprite.define(AnimatedSprite.Action.idle,
+                        new AnimatedSprite.ActionSpec(0, 0, 4, 8, (int) w, (int) h, 150));
+                sprite.define(AnimatedSprite.Action.shoot,
+                        new AnimatedSprite.ActionSpec(4, 0, 4, 8, (int) w, (int) h, 80));
+                break;
             }
-            default -> {
-                sprite.define(AnimatedSprite.Action.idle, new AnimatedSprite.ActionSpec(
-                        0, 0, 4, 8, (int)w, (int)h, 180
-                ));
-                sprite.define(AnimatedSprite.Action.shoot, new AnimatedSprite.ActionSpec(
-                        4, 0, 4, 8, (int)w, (int)h, 100
-                ));
+            default: {
+                sprite.define(AnimatedSprite.Action.idle,
+                        new AnimatedSprite.ActionSpec(0, 0, 4, 8, (int) w, (int) h, 180));
+                sprite.define(AnimatedSprite.Action.shoot,
+                        new AnimatedSprite.ActionSpec(4, 0, 4, 8, (int) w, (int) h, 100));
+                break;
             }
         }
-        // Start idle
         sprite.setAction(AnimatedSprite.Action.idle);
     }
 
-    // ---------- Damage / i-frames ----------
+
+    // ---------------- Java-boss simple mouth animation ----------------
+    // Build a viewport (pixel rect) for col on row 0, using per-frame w/h.
+    private Rectangle2D rectForCol(int col) {
+        int fw = (int) w; // per-frame width passed to super(...)
+        int fh = (int) h; // per-frame height
+        int x  = col * fw;
+        int y  = 0;       // row 0
+        return new Rectangle2D(x, y, fw, fh);
+    }
+
+    // Play col0 -> col1 then return to col0.
+    private void playMouthBurstSimple() {
+        if (sprite == null || bossType != 2) return;
+        if (mouthTl != null) { mouthTl.stop(); mouthTl = null; }
+
+        mouthTl = new Timeline(
+                new KeyFrame(Duration.millis(0),        e -> sprite.setViewport(rectForCol(0))), // closed
+                new KeyFrame(Duration.millis(SHOOT_DELAY_MS), e -> sprite.setViewport(rectForCol(1))), // open
+                new KeyFrame(Duration.millis(SHOOT_DELAY_MS * 2), e -> sprite.setViewport(rectForCol(0))) // back to closed
+        );
+        mouthTl.setCycleCount(1);
+        mouthTl.play();
+    }
+
+    // Snap to dead pose at col2 and stay there.
+    private void showDeathPoseSimple() {
+        if (sprite == null) return;
+        if (mouthTl != null) { mouthTl.stop(); mouthTl = null; }
+        sprite.setViewport(rectForCol(2));
+    }
+
+    // ------------------------------------------------------------------
 
     @Override
     public boolean hit(int dmg) {
         long now = System.currentTimeMillis();
-
-        // Ignore stacked damage within i-frame window
-        if (now - lastHitAt < INVINCIBLE_MS) {
-            return false;
-        }
+        if (now - lastHitAt < INVINCIBLE_MS) return false;
         lastHitAt = now;
 
         boolean dead = super.hit(dmg);
 
         if (!dead) {
             int hpNow = getHp();
-            // quick hit flash + color progression on fallback
             if (fallback != null) {
                 Platform.runLater(() -> {
-                    // flash stroke
                     fallback.setStroke(Color.WHITE);
                     fallback.setStrokeWidth(2.5);
-                    javafx.animation.PauseTransition pt =
-                            new javafx.animation.PauseTransition(javafx.util.Duration.millis(90));
-                    pt.setOnFinished(e -> {
-                        fallback.setStroke(null);
-                        fallback.setStrokeWidth(0);
-                    });
+                    var pt = new javafx.animation.PauseTransition(Duration.millis(90));
+                    pt.setOnFinished(e -> { fallback.setStroke(null); fallback.setStrokeWidth(0); });
                     pt.play();
-
-                    // tint by health threshold
                     fallback.setFill(hpNow > BASE_HP / 2 ? Color.MEDIUMPURPLE : Color.ORCHID);
                 });
             }
@@ -169,11 +184,22 @@ public class Boss extends Enemy {
             if (fallback != null) {
                 Platform.runLater(() -> fallback.setFill(Color.PLUM));
             }
+            if (sprite != null) {
+                Platform.runLater(() -> {
+                    if (bossType == 2) {
+                        showDeathPoseSimple(); // column 3 (index 2)
+                    } else {
+                        // keep legacy death pose for other boss types
+                        sprite.define(AnimatedSprite.Action.shootDown,
+                                new AnimatedSprite.ActionSpec(2, 0, 1, 3, (int) w, (int) h, Integer.MAX_VALUE));
+                        sprite.setActionForce(AnimatedSprite.Action.shootDown);
+                    }
+                });
+            }
         }
+
         return dead;
     }
-
-    // ---------- Shooting ----------
 
     @Override
     public Bullet tryShoot(GameCharacter player) {
@@ -190,61 +216,75 @@ public class Boss extends Enemy {
         double bulletX = x + w / 2.0;
         double bulletY = y + h / 2.0;
 
-        // Play shoot animation (if defined)
-        if (sprite != null) {
-            Platform.runLater(() -> {
-                // prefer explicit SHOOT if present; otherwise javaShoot; else stay idle
-                AnimatedSprite.Action anim = (sprite != null && hasSpec(AnimatedSprite.Action.shoot))
-                        ? AnimatedSprite.Action.shoot
-                        : AnimatedSprite.Action.javaShoot;
-                sprite.setAction(anim);
-
-                javafx.animation.PauseTransition pause =
-                        new javafx.animation.PauseTransition(javafx.util.Duration.millis(400));
-                pause.setOnFinished(e -> sprite.setAction(AnimatedSprite.Action.idle));
-                pause.play();
-            });
+        // --- Mouth animation (simple: col0 -> col1 -> col0) ---
+        if (bossType == 2) {
+            Platform.runLater(this::playMouthBurstSimple);
+        } else if (sprite != null) {
+            try { sprite.setActionForce(AnimatedSprite.Action.shoot); }
+            catch (Throwable __) { sprite.setAction(AnimatedSprite.Action.shoot); }
         }
 
-        // Use BulletConfig if present (scale affects radius), else default bullet
+        // --- Bullet selection ---
+        if (bossType == 2) {
+            // Java boss ONLY → animated java_bullet
+            return new Bullet(
+                    bulletX, bulletY,
+                    dx, dy,
+                    300.0, 1, 1.6, true,
+                    JAVA_BULLET_PATH,
+                    4, 4, 1, 24, 24
+            );
+        }
+
+        // Non-Java bosses: never allow the java_bullet to leak via bulletConfig
         if (bulletConfig != null) {
-            return bulletConfig.createBullet(bulletX, bulletY, dx, dy, 300.0, 1, true);
-        } else {
-            return new Bullet(bulletX, bulletY, dx, dy, 300.0, 1, 1.6, true);
+            boolean isJavaSheet = JAVA_BULLET_PATH.equals(bulletConfig.spritePath);
+            if (!isJavaSheet) {
+                if (bulletConfig.animated) {
+                    return new Bullet(
+                            bulletX, bulletY, dx, dy, 300.0, 1,
+                            Math.max(1.0, bulletConfig.scale), true,
+                            bulletConfig.spritePath, bulletConfig.frameCount, bulletConfig.columns,
+                            bulletConfig.rows, bulletConfig.frameWidth, bulletConfig.frameHeight
+                    );
+                } else if (bulletConfig.spritePath != null) {
+                    return new Bullet(
+                            bulletX, bulletY, dx, dy, 300.0, 1,
+                            Math.max(1.0, bulletConfig.scale), true,
+                            bulletConfig.spritePath
+                    );
+                }
+            }
+            // if it was the java sheet, fall through to plain bullet
         }
+
+        // Default plain enemy bullet
+        return new Bullet(bulletX, bulletY, dx, dy, 300.0, 1, 1.6, true);
     }
 
-    private boolean hasSpec(AnimatedSprite.Action a) {
-        try {
-            // crude check: try switching and back, or rely on your AnimatedSprite having a map getter
-            return true; // assume defined; if not defined, AnimatedSprite falls back to idle safely
-        } catch (Throwable ignored) { return false; }
+    @Override
+    public void update(double dtSec, GameCharacter player) {
+        super.update(dtSec, player);
+        if (sprite != null) {
+            // IMPORTANT: AnimatedSprite.update expects milliseconds
+            sprite.update(dtSec * 1000.0);
+        }
     }
 
     public int getBossType() { return bossType; }
 
-    // ---------- BulletConfig (metadata holder) ----------
-    /**
-     * Stores optional sprite metadata for boss bullets. Creation still uses the
-     * base Bullet constructor; sprite data can be used by your Bullet class if you extend it later.
-     */
     public static class BulletConfig {
         public final String spritePath;
         public final double scale;
-
-        // Optional animation metadata
         public final boolean animated;
         public final int frameCount, columns, rows, frameWidth, frameHeight;
 
-        // Static sprite
         public BulletConfig(String spritePath, double scale) {
             this.spritePath = spritePath;
             this.scale = scale;
             this.animated = false;
             this.frameCount = this.columns = this.rows = this.frameWidth = this.frameHeight = 0;
         }
-
-        // Animated sprite
         public BulletConfig(String spritePath, double scale,
                             int frameCount, int columns, int rows, int frameWidth, int frameHeight) {
             this.spritePath = spritePath;
@@ -257,7 +297,6 @@ public class Boss extends Enemy {
             this.frameHeight = frameHeight;
         }
 
-        /** Create a Bullet aimed at (dx,dy). Adjusts radius by scale. */
         public Bullet createBullet(double x, double y, double dx, double dy,
                                    double speed, int damage, boolean enemyBullet) {
             double baseRadius = 1.6;

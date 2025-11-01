@@ -8,11 +8,12 @@ import java.util.EnumMap;
 import java.util.Objects;
 
 /**
- * AnimatedSprite
+ * AnimatedSprite (FX-safe)
  * - Extends ImageView.
  * - Per-action sprite regions & timing via ActionSpec.
- * - Safe against missing specs (falls back to IDLE).
+ * - All mutations happen on the JavaFX thread.
  * - dt is milliseconds for update(...).
+ * - Supports time scaling (slow-mo): setTimeScale(0.5) to run at half speed.
  */
 public class AnimatedSprite extends ImageView {
 
@@ -24,6 +25,8 @@ public class AnimatedSprite extends ImageView {
         runShootUp, runShootDown,
         javaShoot            // optional/custom; safe to keep
     }
+
+
 
     /** Per-action sprite definition. */
     public static class ActionSpec {
@@ -56,8 +59,20 @@ public class AnimatedSprite extends ImageView {
     private int frame = 0;          // frame index within current spec
     private double accMs = 0;       // accumulator (ms) for update()
 
-    // Optional: original sheet meta
+    // Optional: original sheet meta (kept for compatibility)
     private final int count, columns, rows, offsetX, offsetY, width, height;
+
+    // Time scaling (1.0 = normal, <1 faster, >1 slower)
+    private double timeScale = 1.0;
+
+    // --------------- FX helpers ---------------
+    private static boolean onFx() {
+        return javafx.application.Platform.isFxApplicationThread();
+    }
+    private static void fx(Runnable r) {
+        if (r == null) return;
+        if (onFx()) r.run(); else javafx.application.Platform.runLater(r);
+    }
 
     /**
      * @param image   sprite sheet
@@ -81,11 +96,14 @@ public class AnimatedSprite extends ImageView {
         this.height  = height;
 
         setSmooth(false);
-        setImage(image);
+        setPreserveRatio(false);
+        fx(() -> setImage(image));
 
-        // Derive starting grid cell from pixel offsets
-        int startCol = Math.max(0, offsetX / Math.max(1, width));
-        int startRow = Math.max(0, offsetY / Math.max(1, height));
+        // Derive starting grid cell from pixel offsets (within bounds)
+        final int safeW = Math.max(1, width);
+        final int safeH = Math.max(1, height);
+        int startCol = Math.max(0, offsetX / safeW);
+        int startRow = Math.max(0, offsetY / safeH);
 
         // Default IDLE mapping
         define(Action.idle, new ActionSpec(
@@ -119,7 +137,7 @@ public class AnimatedSprite extends ImageView {
             spec = s;
             frame = 0;
             accMs = 0;
-            applyViewport(0, 0); // reset to first frame of the (new) spec
+            applyViewport(0, 0);
         }
     }
 
@@ -128,37 +146,38 @@ public class AnimatedSprite extends ImageView {
 
     /** Switch to a mapped action; falls back to IDLE if not defined. */
     public void setAction(Action action) {
-        if (javafx.application.Platform.isFxApplicationThread()) {
-            applyAction(action);
-        } else {
-            javafx.application.Platform.runLater(() -> applyAction(action));
-        }
+        fx(() -> applyAction(action));
     }
 
     /** Force re-applying the same action (useful for "pose nudge"). */
     public void setActionForce(Action action) {
-        if (javafx.application.Platform.isFxApplicationThread()) {
-            applyActionForce(action);
-        } else {
-            javafx.application.Platform.runLater(() -> applyActionForce(action));
-        }
+        fx(() -> applyActionForce(action));
     }
 
     /** Advance time in milliseconds; will tick frames when delay is exceeded. */
     public void update(double dtMs) {
         if (spec == null) return;
+
         // Single-frame actions need no ticking
         if (spec.frames <= 1) return;
 
-        accMs += dtMs;
+        double scaled = dtMs * Math.max(0.0001, timeScale);
+        accMs += scaled;
+
         while (accMs >= spec.delayMs) {
-            tick();
             accMs -= spec.delayMs;
+            // Tick must mutate viewport on FX
+            fx(this::tickOnceFx);
         }
     }
 
-    /** Advance one frame with wrapping. */
-    public void tick() {
+    /** Change the global time scale (1.0 = normal; >1.0 slower; <1.0 faster). */
+    public void setTimeScale(double scale) {
+        this.timeScale = Double.isFinite(scale) ? Math.max(0.0001, scale) : 1.0;
+    }
+
+    /** Advance one frame with wrapping (FX thread only). */
+    private void tickOnceFx() {
         if (spec == null) return;
 
         // compute local indices within spec grid
@@ -202,8 +221,8 @@ public class AnimatedSprite extends ImageView {
             action = Action.idle;
             s = specs.get(Action.idle);
             if (s == null) {
-                // As a last resort, synthesize a 1-frame idle from the sheet origin
-                s = new ActionSpec(0, 0, 1, 1, width, height, 120);
+                // Last resort idle
+                s = new ActionSpec(0, 0, 1, 1, Math.max(1, width), Math.max(1, height), 120);
                 specs.put(Action.idle, s);
             }
         }
@@ -219,7 +238,7 @@ public class AnimatedSprite extends ImageView {
         if (s == null) {
             action = Action.idle;
             s = specs.get(Action.idle);
-            if (s == null) s = new ActionSpec(0, 0, 1, 1, width, height, 120);
+            if (s == null) s = new ActionSpec(0, 0, 1, 1, Math.max(1, width), Math.max(1, height), 120);
         }
         currentAction = action;
         spec = s;
@@ -228,7 +247,7 @@ public class AnimatedSprite extends ImageView {
         applyViewport(0, 0);
     }
 
-    /** Applies viewport using current spec and local (col,row) indices. */
+    /** Applies viewport using current spec and local (col,row) indices (FX thread only). */
     private void applyViewport(int localCol, int localRow) {
         if (spec == null) return;
 
@@ -239,19 +258,18 @@ public class AnimatedSprite extends ImageView {
         double sheetW = (sheet != null ? sheet.getWidth() : spec.frameW);
         double sheetH = (sheet != null ? sheet.getHeight() : spec.frameH);
 
+        // Clamp column/row if they overshoot the sheet (prevents disappearing)
+        int maxCol = (int)Math.max(0, (sheetW / Math.max(1, spec.frameW)) - 1);
+        int maxRow = (int)Math.max(0, (sheetH / Math.max(1, spec.frameH)) - 1);
+        col = Math.min(col, maxCol);
+        row = Math.min(row, maxRow);
+
         int pxX = Math.max(0, col * spec.frameW);
         int pxY = Math.max(0, row * spec.frameH);
 
-        if (pxX + spec.frameW > sheetW) {
-            // clamp horizontally
-            col = Math.max(0, ((int)sheetW - spec.frameW) / Math.max(1, spec.frameW));
-            pxX = col * spec.frameW;
-        }
-        if (pxY + spec.frameH > sheetH) {
-            // clamp vertically
-            row = Math.max(0, ((int)sheetH - spec.frameH) / Math.max(1, spec.frameH));
-            pxY = row * spec.frameH;
-        }
+        // Extra clamps for safety
+        if (pxX + spec.frameW > sheetW) pxX = Math.max(0, (int)sheetW - spec.frameW);
+        if (pxY + spec.frameH > sheetH) pxY = Math.max(0, (int)sheetH - spec.frameH);
 
         setViewport(new Rectangle2D(pxX, pxY, spec.frameW, spec.frameH));
     }

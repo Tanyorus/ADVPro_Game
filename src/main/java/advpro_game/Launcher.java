@@ -12,6 +12,8 @@ import javafx.scene.Scene;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.stage.Stage;
+import java.util.logging.*;
+
 
 public class Launcher extends Application {
 
@@ -23,8 +25,42 @@ public class Launcher extends Application {
 
     public static void main(String[] args) { launch(args); }
 
+    private static void setupLogging() {
+        // prettier single-line format
+        System.setProperty("java.util.logging.SimpleFormatter.format",
+                "%1$tF %1$tT %4$s %3$s | %5$s%6$s%n");
+
+        Logger root = Logger.getLogger("");
+        // Make sure console handler exists and is permissive
+        boolean hasConsole = false;
+        for (Handler h : root.getHandlers()) {
+            if (h instanceof ConsoleHandler) {
+                hasConsole = true;
+                h.setLevel(Level.ALL);
+                h.setFormatter(new SimpleFormatter());
+            }
+        }
+        if (!hasConsole) {
+            ConsoleHandler ch = new ConsoleHandler();
+            ch.setLevel(Level.ALL);
+            ch.setFormatter(new SimpleFormatter());
+            root.addHandler(ch);
+        }
+
+        // Global default
+        root.setLevel(Level.INFO);
+
+        // Per-class tuning (adjust to taste)
+        Logger.getLogger(advpro_game.view.GameStage.class.getName()).setLevel(Level.INFO);  // stage events, spawns, scores
+        Logger.getLogger(advpro_game.model.GameCharacter.class.getName()).setLevel(Level.FINE); // actions, shoots
+        // If you have a StageManager:
+        // Logger.getLogger(advpro_game.controller.StageManager.class.getName()).setLevel(Level.INFO);
+    }
+
+
     @Override
     public void start(Stage stage) {
+        setupLogging();
         this.primaryStage = stage;
 
         // Friendly uncaught error handler (special-case GameException)

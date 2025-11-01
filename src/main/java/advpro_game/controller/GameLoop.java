@@ -43,11 +43,8 @@ public class GameLoop implements Runnable {
 
         final boolean worldReady = gameStage.isWorldReady();
 
-        // slow-mo toggle (SHIFT)
-        boolean wantSlow = gameStage.getKeys().isPressed(KeyCode.SHIFT);
-        gameStage.tickSlowMo(wantSlow, dtSec);
-        double scaled = dtSec * gameStage.getTimeScale();
-
+        // Player is NOT slowed by slow-mo.
+        final double dtPlayer = dtSec;
 
         for (GameCharacter c : list) {
             try {
@@ -77,20 +74,18 @@ public class GameLoop implements Runnable {
                 c.handleDownKey(down);
 
                 // shooting — mouse-aim snapped to -45, 0, +45 degrees
-                // IMPORTANT: do NOT spawn bullets while world is rebuilding
                 if (worldReady && !c.isDisabled()) {
                     double aimDeg = getSnappedAimAngleDeg(c);
                     Bullet b = c.tryCreateBullet(gameStage.getKeys(), aimDeg);
                     if (b != null) gameStage.addBullet(b);
                 }
 
-                // physics + collisions
-                c.repaint(scaled * 1000.0); // repaint expects ms
+                // physics + collisions (player at full speed; repaint expects ms)
+                c.repaint(dtPlayer * 1000.0);
                 c.checkPlatformCollision(gameStage.getPlatforms());
                 c.checkReachHighest();
                 c.checkReachFloor();
             } catch (Throwable t) {
-                // keep the loop resilient
                 t.printStackTrace();
             }
         }
@@ -101,21 +96,18 @@ public class GameLoop implements Runnable {
         prevSpace = gameStage.getKeys().isPressed(KeyCode.SPACE) && worldReady;
     }
 
-    /**
-     * Compute snapped aim angle in degrees relative to the player:
-     * returns exactly -45 (up), 0 (straight), or +45 (down).
-     * Uses GameStage mouse position; no dependency on a GameStage helper.
-     * Convention: negative = up, positive = down (screen Y grows downward).
-     */
     // Let GameStage compute the snapped aim based on its tracked mouse.
     private double getSnappedAimAngleDeg(GameCharacter c) {
         return gameStage.getSnappedAimAngleDeg(c);
     }
 
-
     // ===================== BULLETS =====================
     private void updateBullets(double dtSeconds) {
-        double scaled = dtSeconds * gameStage.getTimeScale();
+        // enemy bullets are slowed; player bullets are not
+        final double s        = gameStage.getTimeScale();
+        final double dtEnemy  = dtSeconds * s;
+        final double dtPlayer = dtSeconds;
+
         var bullets = gameStage.getBullets();
 
         // snapshot to avoid CME
@@ -125,7 +117,9 @@ public class GameLoop implements Runnable {
         for (Bullet b : snapshot) {
             if (b == null) continue;
             try {
-                b.update(scaled);
+                boolean enemyShot = false;
+                try { enemyShot = b.isEnemyBullet(); } catch (Throwable ignored) {}
+                b.update(enemyShot ? dtEnemy : dtPlayer);
             } catch (Throwable ignored) {}
 
             // Cull far-off bullets (logic only; visual removal is FX-safe inside GameStage)
@@ -136,7 +130,6 @@ public class GameLoop implements Runnable {
         }
 
         if (!toRemove.isEmpty()) {
-            // remove via GameStage (which defers scene-graph ops while not worldReady)
             for (Bullet b : toRemove) gameStage.removeBullet(b);
         }
     }
@@ -146,9 +139,8 @@ public class GameLoop implements Runnable {
         if (gameStage.getGameCharacterList().isEmpty()) return;
 
         final boolean worldReady = gameStage.isWorldReady();
-        double scaled = dtSeconds * gameStage.getTimeScale();
+        final double scaled = dtSeconds * gameStage.getTimeScale(); // enemies ARE slowed
         GameCharacter player = gameStage.getGameCharacterList().get(0);
-
 
         // defensive copy to avoid CME
         var snapshot = new ArrayList<>(gameStage.getEnemies());
@@ -243,23 +235,26 @@ public class GameLoop implements Runnable {
 
         while (running) {
 
-            // >>> NEW: if the scene is being rebuilt, do nothing this frame
+            // If the scene is being rebuilt, do nothing this frame
             if (!gameStage.isWorldReady()) {
-                // Reset edge detectors so a held key doesn’t “edge-fire” after the pause
                 prevW = prevUp = prevSpace = false;
                 try { Thread.sleep(4); } catch (InterruptedException ignored) {}
-                last = System.nanoTime();   // reset dt so physics won't jump
+                last = System.nanoTime();
                 continue;
             }
-            // <<< NEW
 
             long now = System.nanoTime();
             double dtSec = (now - last) / 1_000_000_000.0;
             last = now;
 
-            updateCharacters(gameStage.getGameCharacterList(), dtSec);
-            updateBullets(dtSec);
-            updateEnemies(dtSec);
+            // --- TICK SLOW-MO ONCE PER FRAME (SHIFT to engage "slowest") ---
+            boolean wantSlow = gameStage.getKeys().isPressed(KeyCode.SHIFT);
+            gameStage.tickSlowMo(wantSlow, dtSec);
+
+            // Updates
+            updateCharacters(gameStage.getGameCharacterList(), dtSec); // player at full speed
+            updateBullets(dtSec);                                      // split dt by ownership
+            updateEnemies(dtSec);                                      // enemies slowed
             updateScore(gameStage.getGameCharacterList());
             checkCharacterEnemyCollisions();
 
@@ -284,5 +279,4 @@ public class GameLoop implements Runnable {
             try { Thread.sleep(sleepMs); } catch (InterruptedException ignored) {}
         }
     }
-
 }
