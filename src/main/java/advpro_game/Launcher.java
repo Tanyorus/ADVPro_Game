@@ -128,6 +128,7 @@ public class Launcher extends Application {
             // Start loops
             gameLoop = new GameLoop(gameStage);
             gameLoop.attachStageManager(stageManager);
+            gameLoop.disableDebugDraw();
             drawingLoop = new DrawingLoop(gameStage);
 
             gameThread = new Thread(gameLoop, "GameLoopThread");

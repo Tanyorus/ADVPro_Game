@@ -22,6 +22,8 @@ public class GameLoop implements Runnable {
     // Invincibility after being hit (ms)
     private long invincibleUntil = 0;
 
+    private volatile boolean debugDrawEnabled = true;
+
     // Edge detection for jump
     private boolean prevW = false, prevUp = false, prevSpace = false, prevE = false;
 
@@ -63,10 +65,29 @@ public class GameLoop implements Runnable {
         this.gameStage = gameStage;
     }
 
-    public void attachStageManager(StageManager m) { this.stageManager = m; }
+    public void attachStageManager(StageManager m) {
+        this.stageManager = m;
+    }
 
     public void stop() { running = false; }
 
+
+
+    public void setDebugDrawEnabled(boolean enabled) {
+        debugDrawEnabled = enabled;
+        if (!enabled) {
+            Platform.runLater(() -> {
+                try {
+                    var gc = gameStage.getDebugGC();
+                    gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);
+                } catch (Exception ignored) {}
+            });
+        }
+    }
+
+    public void disableDebugDraw() {
+        setDebugDrawEnabled(false);
+    }
     // ===================== PLAYER =====================
     private void updateCharacters(List<GameCharacter> list, double dtSec) {
         if (list.isEmpty()) return;
@@ -241,6 +262,7 @@ public class GameLoop implements Runnable {
     // ===================== MAIN LOOP =====================
     @Override
     public void run() {
+
         long last = System.nanoTime();
 
         if (stageManager == null) {
@@ -271,18 +293,20 @@ public class GameLoop implements Runnable {
 
             if (stageManager != null) stageManager.update();
 
-            Platform.runLater(() -> {
-                try {
-                    var gc = gameStage.getDebugGC();
-                    gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);
-                    for (var p : gameStage.getPlatforms()) p.drawDebug(gc);
-                    gc.setStroke(javafx.scene.paint.Color.LIME);
-                    for (var c : gameStage.getGameCharacterList()) {
-                        var hb = c.getHitbox();
-                        gc.strokeRect(hb.getMinX(), hb.getMinY(), hb.getWidth(), hb.getHeight());
-                    }
-                } catch (Exception ignored) {}
-            });
+            if (debugDrawEnabled) {
+                Platform.runLater(() -> {
+                    try {
+                        var gc = gameStage.getDebugGC();
+                        gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);
+                        for (var p : gameStage.getPlatforms()) p.drawDebug(gc);
+                        gc.setStroke(javafx.scene.paint.Color.LIME);
+                        for (var c : gameStage.getGameCharacterList()) {
+                            var hb = c.getHitbox();
+                            gc.strokeRect(hb.getMinX(), hb.getMinY(), hb.getWidth(), hb.getHeight());
+                        }
+                    } catch (Exception ignored) {}
+                });
+            }
 
             long frameTime = (System.nanoTime() - now) / 1_000_000L;
             long sleepMs = (long)(1000.0/60.0) - frameTime;
