@@ -84,6 +84,7 @@ public class GameStage extends Pane {
     private final Pane overlayLayer    = new Pane();   // overlays (modal)
     private final javafx.scene.canvas.Canvas debugCanvas =
             new javafx.scene.canvas.Canvas(WIDTH, HEIGHT);
+    private volatile boolean debugOverlayVisible = false;
 
     // --- detach/attach guards for volatile layers (SAFE, index-free) ---
     private boolean volatileLayersAttached = true;
@@ -248,6 +249,7 @@ public class GameStage extends Pane {
         backgroundLayer.setMouseTransparent(true);
         overlayLayer.setMouseTransparent(true);
         debugCanvas.setMouseTransparent(true);
+        debugCanvas.setVisible(false);
 
         // ---- Add layers (once) ----
         getChildren().addAll(backgroundLayer, worldLayer, enemyLayer,
@@ -645,6 +647,15 @@ public class GameStage extends Pane {
     public List<Bullet>   getBullets()   { return bullets; }
     public List<Enemy>    getEnemies()   { return enemies; }
     public GraphicsContext getDebugGC()  { return debugCanvas.getGraphicsContext2D(); }
+
+    public void setDebugOverlayVisible(boolean visible) {
+        debugOverlayVisible = visible;
+        Ui.later(() -> debugCanvas.setVisible(visible));
+    }
+
+    public boolean isDebugOverlayVisible() {
+        return debugOverlayVisible;
+    }
     public List<Score> getScoreList()    { return scoreList; }
     public void setScoreList(List<Score> list) {
         scoreList = (list != null) ? list : new ArrayList<>();

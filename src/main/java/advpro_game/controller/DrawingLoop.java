@@ -104,7 +104,9 @@ public class DrawingLoop implements Runnable {
     }
 
     // ---------------- Debug Overlay ----------------
+    // ---------------- Debug Overlay ----------------
     private void paintDebug() {
+        if (!gameStage.isDebugOverlayVisible()) return;
         Platform.runLater(() -> {
             var gc = gameStage.getDebugGC();
             gc.clearRect(0, 0, GameStage.WIDTH, GameStage.HEIGHT);

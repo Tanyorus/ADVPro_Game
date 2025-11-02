@@ -22,7 +22,7 @@ public class GameLoop implements Runnable {
     // Invincibility after being hit (ms)
     private long invincibleUntil = 0;
 
-    private volatile boolean debugDrawEnabled = true;
+    private volatile boolean debugDrawEnabled = false;
 
     // Edge detection for jump
     private boolean prevW = false, prevUp = false, prevSpace = false, prevE = false;
@@ -75,6 +75,11 @@ public class GameLoop implements Runnable {
 
     public void setDebugDrawEnabled(boolean enabled) {
         debugDrawEnabled = enabled;
+        if (gameStage != null) {
+            try {
+                gameStage.setDebugOverlayVisible(enabled);
+            } catch (Throwable ignored) {}
+        }
         if (!enabled) {
             Platform.runLater(() -> {
                 try {
